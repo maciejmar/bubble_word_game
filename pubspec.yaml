@@ -62,6 +62,8 @@ flutter:
      - assets/bubble-4.png
      - assets/fonts/arco.ttf 
      - assets/fonts/bubble.ttf
+     - assets/webaby-logo.png
+     - assets/webaby-bubble-ad.png
   #   - images/a_dot_ham.jpeg
 
   # An image asset can refer to one or more resolution-specific "variants", see
