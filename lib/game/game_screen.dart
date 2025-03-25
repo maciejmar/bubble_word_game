@@ -1,108 +1,247 @@
 import 'package:flutter/material.dart';
 import 'dart:math';
+import 'package:flutter/services.dart' show rootBundle; // for CSV if needed
 import 'package:flutter/scheduler.dart';
+import 'package:audioplayers/audioplayers.dart'; // older version usage
+import 'dart:async';
 import 'bubble.dart';
 import 'word_checker.dart';
 import 'game_ui.dart';
 
-/// ------------------------------
-///  Splash Screen and main()
-/// ------------------------------
+////////////////////////////////////////////////////////////////////////
+// WORD CHECKER (unchanged for your dictionary CSV logic, if any)
+////////////////////////////////////////////////////////////////////////
+final WordChecker globalWordChecker = WordChecker();
+
+////////////////////////////////////////////////////////////////////////
+// SPLASH SCREEN + RANDOM SMALL BUBBLES + RANDOM SOUNDS
+////////////////////////////////////////////////////////////////////////
+
 void main() {
   runApp(SplashScreenApp());
 }
 
-/// This is the app that first shows the splash screen, then navigates to BubbleWordGame.
+/// The splash screen app that shows "Webaby presents" + random soda bubbles
+/// with multiple bubble sounds played at random intervals.
 class SplashScreenApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: SplashScreen(), // We'll define the splash below
+      home: SplashScreen(),
     );
   }
 }
 
-/// The splash screen that:
-/// 1) Displays "Webaby presents"
-/// 2) Shows webaby-logo.png
-/// 3) Shows webaby-bubble-ad.png
-/// 4) Over 2 seconds, it does a top-to-bottom reveal
-/// 5) Navigates to BubbleWordGame
+// A model for your smaller "soda" bubble.
+class SplashSmallBubble {
+  double x;
+  double y;
+  double radius;
+  double speed;
+  Color color;
+
+  SplashSmallBubble({
+    required this.x,
+    required this.y,
+    required this.radius,
+    required this.speed,
+    required this.color,
+  });
+}
+
 class SplashScreen extends StatefulWidget {
   @override
   _SplashScreenState createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderStateMixin {
+class _SplashScreenState extends State<SplashScreen>
+    with TickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _animation;
+  // Ticker for bubble motion.
+  late Ticker _bubbleTicker;
+  final Random rng = Random();
+  // The random soda bubbles.
+  final List<SplashSmallBubble> sodaBubbles = [];
+  // AudioPlayer for one-shot sounds.
+  late AudioPlayer _audioPlayer;
+
+  // List of bubble sounds.
+  final List<String> bubbleSounds = [
+    'assets/bubble_sound.ogg',
+    'assets/bubble_sound-2.ogg',
+    'assets/bubble_sound-3.ogg',
+  ];
+
+  // We'll track time for next random bubble sound.
+  double _timeAccumulator = 0.0;
+  double _nextSoundDelay = 2.0; // 2 seconds until first random sound.
 
   @override
   void initState() {
     super.initState();
 
-    // We'll animate from 1.0 to 0.0 over 2 seconds,
-    // "sliding" the splash off the screen from top to bottom
+    // 1) Load the dictionary.
+    _initGame();
+
+    // 2) Setup top->bottom reveal animation.
     _controller = AnimationController(
-      duration: Duration(seconds: 2),
+      duration: Duration(seconds: 8),
       vsync: this,
     );
-    _animation = Tween<double>(begin: 1.0, end: 0.0).animate(_controller);
+    _animation =
+        Tween<double>(begin: 1.0, end: 0.0).animate(_controller);
 
-    // After 2 seconds, we run the animation, then go to the main game
-    Future.delayed(Duration(seconds: 4), () {
+    // After 2 seconds, start animation then go to main game.
+    Future.delayed(Duration(seconds: 2), () {
       _controller.forward().then((_) {
+        _audioPlayer.stop();
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (context) => BubbleWordGame()),
         );
       });
     });
+
+    // 3) Random soda bubbles.
+    _initSodaBubbles();
+
+    // 4) Ticker for bubble motion + random sound logic.
+    DateTime? lastUpdate;
+    _bubbleTicker = createTicker((now) {
+      final current = DateTime.now();
+      if (lastUpdate == null) {
+        lastUpdate = current;
+        return;
+      }
+      final dtSeconds =
+          current.difference(lastUpdate!).inMicroseconds / 1e6;
+      lastUpdate = current;
+      setState(() {
+        _updateSodaBubbles();
+      });
+      _handleRandomSounds(dtSeconds);
+    });
+    _bubbleTicker.start();
+
+    // 5) Create your AudioPlayer.
+    _audioPlayer = AudioPlayer();
+  }
+
+  Future<void> _initGame() async {
+    await globalWordChecker.loadDictionary();
+    print("Dictionary loaded in Splash!");
+  }
+
+  void _initSodaBubbles() {
+    for (int i = 0; i < 20; i++) {
+      sodaBubbles.add(SplashSmallBubble(
+        x: rng.nextDouble() * 400,
+        y: 700 + rng.nextDouble() * 200,
+        radius: 5 + rng.nextDouble() * 15,
+        speed: 0.5 + rng.nextDouble() * 1.5,
+        color: Colors.primaries[rng.nextInt(Colors.primaries.length)]
+            .withOpacity(rng.nextDouble() * 0.5 + 0.4),
+      ));
+    }
+  }
+
+  void _updateSodaBubbles() {
+    for (var sb in sodaBubbles) {
+      sb.y -= sb.speed;
+      if (sb.y < -sb.radius * 2) {
+        // respawn
+        sb.y = 700 + rng.nextDouble() * 200;
+        sb.x = rng.nextDouble() * 400;
+        sb.radius = 5 + rng.nextDouble() * 15;
+        sb.speed = 0.5 + rng.nextDouble() * 1.5;
+        sb.color = Colors.primaries[rng.nextInt(Colors.primaries.length)]
+            .withOpacity(rng.nextDouble() * 0.5 + 0.4);
+      }
+    }
+  }
+
+  void _handleRandomSounds(double dt) {
+    _timeAccumulator += dt;
+    if (_timeAccumulator >= _nextSoundDelay) {
+      final soundIndex = rng.nextInt(bubbleSounds.length);
+      final soundPath = bubbleSounds[soundIndex];
+      _audioPlayer.play(soundPath, isLocal: true);
+      _timeAccumulator = 0.0;
+      _nextSoundDelay = 0.5 + rng.nextDouble() * 1.5;
+    }
   }
 
   @override
   void dispose() {
     _controller.dispose();
+    _bubbleTicker.dispose();
+    _audioPlayer.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // We shrink the Column from full heightFactor=1 down to 0
+      backgroundColor: Colors.white,
       body: AnimatedBuilder(
         animation: _animation,
         builder: (context, child) {
           return FractionallySizedBox(
             alignment: Alignment.topCenter,
             heightFactor: _animation.value,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  "Webaby presents",
-                  style: TextStyle(
-                    fontSize: 32,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black,
-                    fontFamily: 'Arco',
+            child: Container(
+              color: Colors.white,
+              child: Stack(
+                children: [
+                  Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          "Webaby presents",
+                          style: TextStyle(
+                            fontSize: 32,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black,
+                            fontFamily: 'Arco',
+                          ),
+                        ),
+                        SizedBox(height: 20),
+                        Container(
+                          color: Colors.white,
+                          child: Image.asset(
+                            'assets/webaby-logo.png',
+                            width: 150,
+                            height: 150,
+                          ),
+                        ),
+                        SizedBox(height: 20),
+                        Container(
+                          color: Colors.blue[50],
+                          child: Image.asset(
+                            'assets/webaby-bubble-ad.png',
+                            width: 300,
+                            height: 200,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                SizedBox(height: 20),
-                // your actual logo
-                Image.asset(
-                  'assets/webaby-logo.png',
-                  width: 150,
-                  height: 150,
-                ),
-                SizedBox(height: 20),
-                // your advertisement
-                Image.asset(
-                  'assets/webaby-bubble-ad.png',
-                  width: 300,
-                  height: 200,
-                ),
-              ],
+                  ...sodaBubbles.map((sb) => Positioned(
+                        left: sb.x,
+                        top: sb.y,
+                        child: Container(
+                          width: sb.radius * 2,
+                          height: sb.radius * 2,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: sb.color,
+                          ),
+                        ),
+                      )),
+                ],
+              ),
             ),
           );
         },
@@ -111,10 +250,10 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
   }
 }
 
-/// -----------------------------------------
-/// Your original code: BubbleWordGame
-/// (unchanged except we don't run it from main)
-/// -----------------------------------------
+////////////////////////////////////////////////////////////////////////
+// BUBBLE WORD GAME
+////////////////////////////////////////////////////////////////////////
+
 class BubbleWordGame extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -125,7 +264,6 @@ class BubbleWordGame extends StatelessWidget {
   }
 }
 
-// Your blinking GAME OVER widget
 class FlashingGameOverText extends StatefulWidget {
   @override
   _FlashingGameOverTextState createState() => _FlashingGameOverTextState();
@@ -133,13 +271,11 @@ class FlashingGameOverText extends StatefulWidget {
 
 class _FlashingGameOverTextState extends State<FlashingGameOverText> {
   bool isVisible = true;
-
   @override
   void initState() {
     super.initState();
     _startFlashing();
   }
-
   void _startFlashing() {
     Future.delayed(Duration(milliseconds: 500), () {
       if (mounted) {
@@ -150,7 +286,6 @@ class _FlashingGameOverTextState extends State<FlashingGameOverText> {
       }
     });
   }
-
   @override
   Widget build(BuildContext context) {
     return Center(
@@ -177,7 +312,6 @@ class _FlashingGameOverTextState extends State<FlashingGameOverText> {
               ),
             ),
             SizedBox(height: 20),
-            // If you want to re-enable a "PLAY AGAIN" line, do so here
           ],
         ),
       ),
@@ -194,15 +328,19 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
     with SingleTickerProviderStateMixin {
   final List<Bubble> bubbles = [];
   final Random random = Random();
+  bool errorInCollectedLetters = false;
   late Ticker ticker;
   int score = 0;
-  int timeLeft = 10;
+  int timeLeft = 30;
+  Timer? _clearTimer;
+  Timer? _fadeTimer;
+  Timer? _errorTimer;
+  Timer? _successTimer;
   final List<String> collectedLetters = [];
-  final WordChecker wordChecker = WordChecker();
   bool wordSuccess = false;
   String lastTappedLetter = '';
   double letterOpacity = 0.0;
-
+  
   @override
   void initState() {
     super.initState();
@@ -213,10 +351,22 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
     });
     ticker.start();
     _startTimer();
+    print("DEBUG: Global dictionary size: ${globalWordChecker.dictionary.length}");
   }
-
+  
+  @override
+  void dispose() {
+    ticker.dispose();
+    _clearTimer?.cancel();
+    _fadeTimer?.cancel();
+    _errorTimer?.cancel();
+    _successTimer?.cancel();
+    super.dispose();
+  }
+  
   void _startTimer() {
-    Future.delayed(Duration(seconds: 1), () {
+    Timer(Duration(seconds: 1), () {
+      if (!mounted) return;
       if (timeLeft == 0) {
         ticker.stop();
         _showGameOverDialog();
@@ -228,7 +378,7 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
       }
     });
   }
-
+  
   void _updateBubbles() {
     for (var bubble in bubbles) {
       bubble.y -= 2;
@@ -238,16 +388,14 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
     }
     bubbles.removeWhere((b) => b.toBeRemoved);
     if (random.nextDouble() < 0.05) {
-      bubbles.add(
-        Bubble(
-          x: random.nextDouble() * 300,
-          y: 600,
-          letter: String.fromCharCode(65 + random.nextInt(26)),
-        ),
-      );
+      bubbles.add(Bubble(
+        x: random.nextDouble() * 300,
+        y: 600,
+        letter: String.fromCharCode(65 + random.nextInt(26)),
+      ));
     }
   }
-
+  
   void _onBubbleTap(Bubble bubble) {
     if (timeLeft == 0) return;
     setState(() {
@@ -257,32 +405,44 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
       bubble.toBeRemoved = true;
       _checkForWords();
     });
-    // Fade out letter after 1 second
-    Future.delayed(Duration(seconds: 1), () {
-      if (mounted) {
-        setState(() {
-          letterOpacity = 0.0;
-        });
-      }
+    _fadeTimer = Timer(Duration(seconds: 1), () {
+      if (!mounted) return;
+      setState(() {
+        letterOpacity = 0.0;
+      });
     });
   }
-
+  
   void _checkForWords() {
     if (collectedLetters.isEmpty) return;
-    String wordToCheck = collectedLetters.join();
-    if (!wordChecker.dictionary.any((word) => word.startsWith(wordToCheck))) {
+    final wordToCheck = collectedLetters.join().toUpperCase();
+    print("Word to check: $wordToCheck");
+    print("startsAnyWord returns: ${globalWordChecker.startsAnyWord(wordToCheck)}");
+  
+    if (!globalWordChecker.startsAnyWord(wordToCheck)) {
+      print("Clearing collectedLetters because no word starts with $wordToCheck");
       setState(() {
-        collectedLetters.clear();
+        errorInCollectedLetters = true;
+      });
+      _errorTimer = Timer(Duration(milliseconds: 1500), () {
+        if (!mounted) return;
+        setState(() {
+          collectedLetters.clear();
+          errorInCollectedLetters = false;
+        });
       });
       return;
     }
-    if (wordChecker.isValidWord(wordToCheck)) {
+  
+    if (globalWordChecker.isValidWord(wordToCheck)) {
+      print("$wordToCheck is a valid word!");
       setState(() {
         score += wordToCheck.length * 10;
         wordSuccess = true;
       });
       _triggerSuccessAnimation();
-      Future.delayed(Duration(milliseconds: 700), () {
+      _successTimer = Timer(Duration(milliseconds: 1500), () {
+        if (!mounted) return;
         setState(() {
           collectedLetters.clear();
           wordSuccess = false;
@@ -290,11 +450,17 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
       });
     }
   }
-
+  
   void _triggerSuccessAnimation() {
     showDialog(
       context: context,
-      builder: (context) {
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        // Schedule the pop inside the dialog's context.
+        Timer(Duration(milliseconds: 500), () {
+          if (!mounted) return;
+          Navigator.of(dialogContext).pop();
+        });
         return Center(
           child: Container(
             width: 200,
@@ -305,11 +471,11 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
             ),
             child: Center(
               child: Text(
-                "BOOM!",
+                'BOOM! $score',
                 style: TextStyle(
                   fontSize: 30,
                   color: Colors.white,
-                  fontWeight: FontWeight.bold,
+                  fontWeight: FontWeight.normal,
                   fontFamily: 'Arco',
                 ),
               ),
@@ -318,11 +484,8 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
         );
       },
     );
-    Future.delayed(Duration(milliseconds: 500), () {
-      Navigator.of(context).pop();
-    });
   }
-
+  
   void _showGameOverDialog() {
     showDialog(
       context: context,
@@ -338,7 +501,7 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
                 onTap: () {
                   if (mounted) {
                     Navigator.of(dialogContext, rootNavigator: true).pop();
-                    Future.delayed(Duration(milliseconds: 100), () {
+                    Timer(Duration(milliseconds: 100), () {
                       if (mounted) _restartGame();
                     });
                   }
@@ -367,11 +530,11 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
       },
     );
   }
-
+  
   void _restartGame() {
     setState(() {
       score = 0;
-      timeLeft = 10;
+      timeLeft = 30;
       collectedLetters.clear();
       bubbles.clear();
       lastTappedLetter = '';
@@ -380,42 +543,25 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
     ticker.start();
     _startTimer();
   }
-
+  
   @override
   Widget build(BuildContext context) {
+    print("collectedLetters: $collectedLetters");
     return Scaffold(
       body: Stack(
         children: [
-          // The background color
+          // Background.
           Container(
             color: const Color.fromARGB(255, 237, 240, 219),
           ),
-          // Score/time UI
+          // Top info panel (time, score, etc.).
           GameUI(
             score: score,
             timeLeft: timeLeft,
             collectedLetters: collectedLetters,
             wordSuccess: wordSuccess,
           ),
-          // The letter that fades in/out after tapping a bubble
-          Positioned(
-            top: 100,
-            right: 50,
-            child: AnimatedOpacity(
-              opacity: letterOpacity,
-              duration: Duration(milliseconds: 500),
-              child: Text(
-                lastTappedLetter,
-                style: TextStyle(
-                  fontSize: 100,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black,
-                  fontFamily: 'Arco',
-                ),
-              ),
-            ),
-          ),
-          // The floating bubbles
+          // Floating bubbles (interactive).
           ...bubbles.map((bubble) => Positioned(
                 left: bubble.x,
                 top: bubble.y,
@@ -442,6 +588,46 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
                   ),
                 ),
               )),
+          // Big single letter fade on the right.
+          Positioned(
+            top: 100,
+            right: 50,
+            child: AnimatedOpacity(
+              opacity: letterOpacity,
+              duration: Duration(milliseconds: 500),
+              child: Text(
+                lastTappedLetter,
+                style: TextStyle(
+                  fontSize: 100,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black,
+                  fontFamily: 'Arco',
+                ),
+              ),
+            ),
+          ),
+          // Bottom panel showing the collected letters.
+          Positioned(
+            bottom: 50,
+            left: 20,
+            right: 20,
+            child: Container(
+              padding: EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Center(
+                child: Text(
+                  collectedLetters.join(" "),
+                  style: TextStyle(
+                    fontSize: 28,
+                    color: errorInCollectedLetters ? Colors.red : Colors.white,
+                    fontFamily: 'Arco',
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
