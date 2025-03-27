@@ -23,7 +23,22 @@ class GameUI extends StatelessWidget {
           left: 20,
           child: Text("Time: $timeLeft", style: TextStyle(fontSize: 20, fontFamily: "Arco", color: const Color.fromARGB(255, 6, 48, 70))),
         ),
-     
+        Positioned(
+          top: 20,
+          right: 20,
+          child: Text(
+            "Score: $score",
+            style: TextStyle(
+              fontSize: 24,
+              fontFamily: "Arco",
+              color: Colors.white,
+              shadows: [
+                Shadow(blurRadius: 3, color: Colors.black, offset: Offset(1, 1)),
+              ],
+            ),
+          ),
+        ),
+
         Positioned(
           bottom: 50,
           left: 20,
