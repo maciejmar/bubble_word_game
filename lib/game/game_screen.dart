@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'dart:math';
-import 'package:flutter/services.dart' show rootBundle; // for CSV if needed
+import 'package:flutter/services.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter/scheduler.dart';
-import 'package:audioplayers/audioplayers.dart'; // older version usage
+import 'package:audioplayers/audioplayers.dart';
 import 'dart:async';
+
 import 'bubble.dart';
 import 'word_checker.dart';
 import 'game_ui.dart';
@@ -59,24 +61,19 @@ class _SplashScreenState extends State<SplashScreen>
     with TickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _animation;
-  // Ticker for bubble motion.
   late Ticker _bubbleTicker;
   final Random rng = Random();
-  // The random soda bubbles.
   final List<SplashSmallBubble> sodaBubbles = [];
-  // AudioPlayer for one-shot sounds.
   late AudioPlayer _audioPlayer;
 
-  // List of bubble sounds.
   final List<String> bubbleSounds = [
     'assets/bubble_sound.ogg',
     'assets/bubble_sound-2.ogg',
     'assets/bubble_sound-3.ogg',
   ];
 
-  // We'll track time for next random bubble sound.
   double _timeAccumulator = 0.0;
-  double _nextSoundDelay = 2.0; // 2 seconds until first random sound.
+  double _nextSoundDelay = 2.0;
 
   @override
   void initState() {
@@ -90,8 +87,7 @@ class _SplashScreenState extends State<SplashScreen>
       duration: Duration(seconds: 8),
       vsync: this,
     );
-    _animation =
-        Tween<double>(begin: 1.0, end: 0.0).animate(_controller);
+    _animation = Tween<double>(begin: 1.0, end: 0.0).animate(_controller);
 
     // After 2 seconds, start animation then go to main game.
     Future.delayed(Duration(seconds: 2), () {
@@ -103,7 +99,7 @@ class _SplashScreenState extends State<SplashScreen>
       });
     });
 
-    // 3) Random soda bubbles.
+    // 3) Initialize soda bubbles.
     _initSodaBubbles();
 
     // 4) Ticker for bubble motion + random sound logic.
@@ -150,7 +146,6 @@ class _SplashScreenState extends State<SplashScreen>
     for (var sb in sodaBubbles) {
       sb.y -= sb.speed;
       if (sb.y < -sb.radius * 2) {
-        // respawn
         sb.y = 700 + rng.nextDouble() * 200;
         sb.x = rng.nextDouble() * 400;
         sb.radius = 5 + rng.nextDouble() * 15;
@@ -166,7 +161,7 @@ class _SplashScreenState extends State<SplashScreen>
     if (_timeAccumulator >= _nextSoundDelay) {
       final soundIndex = rng.nextInt(bubbleSounds.length);
       final soundPath = bubbleSounds[soundIndex];
-      _audioPlayer.play(soundPath, isLocal: true);
+      _audioPlayer.play(AssetSource(soundPath));
       _timeAccumulator = 0.0;
       _nextSoundDelay = 0.5 + rng.nextDouble() * 1.5;
     }
@@ -337,6 +332,7 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
   Timer? _errorTimer;
   Timer? _successTimer;
   final List<String> collectedLetters = [];
+  bool ambiguousMatch = false; // New flag for ambiguous (extended) match.
   bool wordSuccess = false;
   String lastTappedLetter = '';
   double letterOpacity = 0.0;
@@ -403,6 +399,8 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
       lastTappedLetter = bubble.letter;
       letterOpacity = 1.0;
       bubble.toBeRemoved = true;
+      // Reset ambiguous flag on new letter tap.
+      ambiguousMatch = false;
       _checkForWords();
     });
     _fadeTimer = Timer(Duration(seconds: 1), () {
@@ -434,21 +432,54 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
       return;
     }
   
+    // If the current letters form a valid word, check for ambiguous (extended) possibility.
     if (globalWordChecker.isValidWord(wordToCheck)) {
-      print("$wordToCheck is a valid word!");
-      setState(() {
-        score += wordToCheck.length * 10;
-        wordSuccess = true;
-      });
-      _triggerSuccessAnimation();
-      _successTimer = Timer(Duration(milliseconds: 1500), () {
-        if (!mounted) return;
+      // Check if there exists any longer word starting with wordToCheck.
+      final longerMatches = globalWordChecker.dictionary
+          .where((w) => w.startsWith(wordToCheck) && w.length > wordToCheck.length)
+          .toList();
+      if (longerMatches.isNotEmpty) {
+        // There is a possibility to extend the word.
         setState(() {
-          collectedLetters.clear();
-          wordSuccess = false;
+          ambiguousMatch = true;
         });
-      });
+        // Do not trigger success until the user taps the ambiguous check button.
+        return;
+      } else {
+        // No longer word exists; accept word immediately.
+        print("$wordToCheck is a valid word!");
+        setState(() {
+          score += wordToCheck.length * 10;
+          wordSuccess = true;
+        });
+        _triggerSuccessAnimation();
+        _successTimer = Timer(Duration(milliseconds: 1500), () {
+          if (!mounted) return;
+          setState(() {
+            collectedLetters.clear();
+            wordSuccess = false;
+          });
+        });
+      }
     }
+  }
+  
+  // Called when the ambiguous check button is tapped.
+  void _acceptAmbiguousWord() {
+    final wordToCheck = collectedLetters.join().toUpperCase();
+    setState(() {
+      score += wordToCheck.length * 10;
+      wordSuccess = true;
+      ambiguousMatch = false;
+    });
+    _triggerSuccessAnimation();
+    _successTimer = Timer(Duration(milliseconds: 1500), () {
+      if (!mounted) return;
+      setState(() {
+        collectedLetters.clear();
+        wordSuccess = false;
+      });
+    });
   }
   
   void _triggerSuccessAnimation() {
@@ -456,7 +487,6 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) {
-        // Schedule the pop inside the dialog's context.
         Timer(Duration(milliseconds: 500), () {
           if (!mounted) return;
           Navigator.of(dialogContext).pop();
@@ -515,11 +545,26 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
                     fontFamily: 'Arco',
                     decoration: TextDecoration.none,
                     shadows: [
-                      Shadow(
-                        blurRadius: 10,
-                        color: Colors.black,
-                        offset: Offset(3, 3),
-                      ),
+                      Shadow(blurRadius: 10, color: Colors.black, offset: Offset(3, 3)),
+                    ],
+                  ),
+                ),
+              ),
+              SizedBox(height: 20),
+              GestureDetector(
+                onTap: () {
+                  SystemNavigator.pop();
+                },
+                child: Text(
+                  "QUIT",
+                  style: TextStyle(
+                    fontSize: 40,
+                    fontWeight: FontWeight.bold,
+                    color: const Color.fromARGB(255, 134, 123, 22),
+                    fontFamily: 'Arco',
+                    decoration: TextDecoration.none,
+                    shadows: [
+                      Shadow(blurRadius: 10, color: Colors.black, offset: Offset(3, 3)),
                     ],
                   ),
                 ),
@@ -544,6 +589,38 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
     _startTimer();
   }
   
+  // Build widget to show collected letters with ambiguous check.
+  Widget _buildCollectedLetters() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Text(
+          collectedLetters.join(" "),
+          style: TextStyle(
+            fontSize: 28,
+            color: errorInCollectedLetters ? Colors.red : Colors.white,
+            fontFamily: 'Arco',
+          ),
+        ),
+        // If ambiguousMatch is true, show a square check button.
+        if (ambiguousMatch) ...[
+          SizedBox(width: 8),
+          GestureDetector(
+            onTap: _acceptAmbiguousWord,
+            child: Container(
+              width: 30,
+              height: 30,
+              decoration: BoxDecoration(
+                border: Border.all(color: const Color.fromARGB(255, 247, 84, 220), width: 3),
+              ),
+              child: Icon(Icons.check, color: Colors.white, size: 20),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+  
   @override
   Widget build(BuildContext context) {
     print("collectedLetters: $collectedLetters");
@@ -555,10 +632,11 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
             color: const Color.fromARGB(255, 237, 240, 219),
           ),
           // Top info panel (time, score, etc.).
+          // Remove duplicate collectedLetters display from GameUI if needed.
           GameUI(
             score: score,
             timeLeft: timeLeft,
-            collectedLetters: collectedLetters,
+            collectedLetters: collectedLetters, // If GameUI displays these, consider removing.
             wordSuccess: wordSuccess,
           ),
           // Floating bubbles (interactive).
@@ -588,7 +666,7 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
                   ),
                 ),
               )),
-          // Big single letter fade on the right.
+          // (Optional) Remove this big single letter widget if it's redundant.
           Positioned(
             top: 100,
             right: 50,
@@ -606,7 +684,7 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
               ),
             ),
           ),
-          // Bottom panel showing the collected letters.
+          // Bottom panel showing the collected letters and ambiguous check button.
           Positioned(
             bottom: 50,
             left: 20,
@@ -614,17 +692,11 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
             child: Container(
               padding: EdgeInsets.all(12),
               decoration: BoxDecoration(
+                // You can add a background color if desired.
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Center(
-                child: Text(
-                  collectedLetters.join(" "),
-                  style: TextStyle(
-                    fontSize: 28,
-                    color: errorInCollectedLetters ? Colors.red : Colors.white,
-                    fontFamily: 'Arco',
-                  ),
-                ),
+                child: _buildCollectedLetters(),
               ),
             ),
           ),

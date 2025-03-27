@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.webaby.bubble_word_game">
     <application
         android:label="bubble_word_game"
         android:name="${applicationName}"
