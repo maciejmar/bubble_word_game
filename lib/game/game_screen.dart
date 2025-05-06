@@ -78,6 +78,9 @@ class _SplashScreenState extends State<SplashScreen>
   @override
   void initState() {
     super.initState();
+    _audioPlayer = AudioPlayer(); // initialize audio player for this screen
+    // _audioPlayer.setVolume(1.0);
+    // _audioPlayer.setReleaseMode(ReleaseMode.stop);
 
     // 1) Load the dictionary.
     _initGame();
@@ -87,7 +90,8 @@ class _SplashScreenState extends State<SplashScreen>
       duration: Duration(seconds: 8),
       vsync: this,
     );
-    _animation = Tween<double>(begin: 1.0, end: 0.0).animate(_controller);
+    _animation =
+        Tween<double>(begin: 1.0, end: 0.0).animate(_controller);
 
     // After 2 seconds, start animation then go to main game.
     Future.delayed(Duration(seconds: 2), () {
@@ -121,7 +125,7 @@ class _SplashScreenState extends State<SplashScreen>
     _bubbleTicker.start();
 
     // 5) Create your AudioPlayer.
-    _audioPlayer = AudioPlayer();
+    //_audioPlayer = AudioPlayer();
   }
 
   Future<void> _initGame() async {
@@ -146,12 +150,20 @@ class _SplashScreenState extends State<SplashScreen>
     for (var sb in sodaBubbles) {
       sb.y -= sb.speed;
       if (sb.y < -sb.radius * 2) {
+        // respawn bubble.
         sb.y = 700 + rng.nextDouble() * 200;
         sb.x = rng.nextDouble() * 400;
         sb.radius = 5 + rng.nextDouble() * 15;
         sb.speed = 0.5 + rng.nextDouble() * 1.5;
         sb.color = Colors.primaries[rng.nextInt(Colors.primaries.length)]
             .withOpacity(rng.nextDouble() * 0.5 + 0.4);
+        // Optionally play a sound when a bubble respawns:
+        // _audioPlayer.play(AssetSource('assets/bubble_sound.ogg')).then((result) {
+        //   print('Play result: $result');
+        // }).catchError((error) {
+        //   print('Audio play error: $error');
+        // });
+        _audioPlayer.play(AssetSource('assets/success-letter.ogg'));
       }
     }
   }
@@ -322,7 +334,9 @@ class BubbleGameScreen extends StatefulWidget {
 class _BubbleGameScreenState extends State<BubbleGameScreen>
     with SingleTickerProviderStateMixin {
   final List<Bubble> bubbles = [];
+  final List<_BubbleExplosion> _explosions = [];
   final Random random = Random();
+  late AudioPlayer _audioPlayer;
   bool errorInCollectedLetters = false;
   late Ticker ticker;
   int score = 0;
@@ -332,7 +346,7 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
   Timer? _errorTimer;
   Timer? _successTimer;
   final List<String> collectedLetters = [];
-  bool ambiguousMatch = false; // New flag for ambiguous (extended) match.
+  bool ambiguousMatch = false; // Flag for ambiguous (extended) match.
   bool wordSuccess = false;
   String lastTappedLetter = '';
   double letterOpacity = 0.0;
@@ -340,6 +354,7 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
   @override
   void initState() {
     super.initState();
+    _audioPlayer = AudioPlayer(); // initialize audio player for this screen
     ticker = createTicker((_) {
       setState(() {
         _updateBubbles();
@@ -389,20 +404,47 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
         y: 600,
         letter: String.fromCharCode(65 + random.nextInt(26)),
       ));
+      // Play sound effect for new bubble appearance.
+      // (You may want to adjust so it doesn't play too often.)
+      // Uncomment the next line if desired:
+      final result = _audioPlayer.play(AssetSource('assets/bubble_sound.ogg'));
+      print(result);
+       //_audioPlayer.play(AssetSource('assets/bubble_sound.ogg'));
     }
   }
   
   void _onBubbleTap(Bubble bubble) {
-    if (timeLeft == 0) return;
+    // 1) Generate a unique key for this explosion:
+  final expKey = UniqueKey();
+
+  // 2) Create the explosion, referring only to expKey in onComplete:
+  final explosion = _BubbleExplosion(
+    key: expKey,
+    x: bubble.x + 25,  // center of a 50×50 bubble
+    y: bubble.y + 25,
+    letter: bubble.letter,
+    onComplete: () {
+      // when the animation completes, remove by matching key
+      setState(() {
+        _explosions.removeWhere((e) => e.key == expKey);
+      });
+    },
+  );
+
     setState(() {
+      
       collectedLetters.add(bubble.letter);
       lastTappedLetter = bubble.letter;
       letterOpacity = 1.0;
       bubble.toBeRemoved = true;
-      // Reset ambiguous flag on new letter tap.
-      ambiguousMatch = false;
+      _explosions.add(explosion);
+      ambiguousMatch = false; // Reset ambiguous flag.
       _checkForWords();
     });
+    // Play tap sound.
+    // (Assuming you have a tap sound asset.)
+    _audioPlayer.play(AssetSource('assets/success-letter.ogg'));
+    
     _fadeTimer = Timer(Duration(seconds: 1), () {
       if (!mounted) return;
       setState(() {
@@ -419,6 +461,8 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
   
     if (!globalWordChecker.startsAnyWord(wordToCheck)) {
       print("Clearing collectedLetters because no word starts with $wordToCheck");
+      // Play bad letter sound.
+      _audioPlayer.play(AssetSource('assets/bad-letter.ogg'));
       setState(() {
         errorInCollectedLetters = true;
       });
@@ -432,18 +476,17 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
       return;
     }
   
-    // If the current letters form a valid word, check for ambiguous (extended) possibility.
     if (globalWordChecker.isValidWord(wordToCheck)) {
-      // Check if there exists any longer word starting with wordToCheck.
+      // Check for ambiguous longer matches.
       final longerMatches = globalWordChecker.dictionary
           .where((w) => w.startsWith(wordToCheck) && w.length > wordToCheck.length)
           .toList();
       if (longerMatches.isNotEmpty) {
-        // There is a possibility to extend the word.
+        // Ambiguous case: current word is valid but can be extended.
         setState(() {
           ambiguousMatch = true;
         });
-        // Do not trigger success until the user taps the ambiguous check button.
+        // Do not trigger success until user taps the ambiguous check.
         return;
       } else {
         // No longer word exists; accept word immediately.
@@ -464,7 +507,7 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
     }
   }
   
-  // Called when the ambiguous check button is tapped.
+  // Called when user taps the ambiguous check button.
   void _acceptAmbiguousWord() {
     final wordToCheck = collectedLetters.join().toUpperCase();
     setState(() {
@@ -545,7 +588,11 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
                     fontFamily: 'Arco',
                     decoration: TextDecoration.none,
                     shadows: [
-                      Shadow(blurRadius: 10, color: Colors.black, offset: Offset(3, 3)),
+                      Shadow(
+                        blurRadius: 10,
+                        color: Colors.black,
+                        offset: Offset(3, 3),
+                      ),
                     ],
                   ),
                 ),
@@ -564,7 +611,11 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
                     fontFamily: 'Arco',
                     decoration: TextDecoration.none,
                     shadows: [
-                      Shadow(blurRadius: 10, color: Colors.black, offset: Offset(3, 3)),
+                      Shadow(
+                        blurRadius: 10,
+                        color: Colors.black,
+                        offset: Offset(3, 3),
+                      ),
                     ],
                   ),
                 ),
@@ -589,7 +640,7 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
     _startTimer();
   }
   
-  // Build widget to show collected letters with ambiguous check.
+  // Build widget to show collected letters with ambiguous check button.
   Widget _buildCollectedLetters() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -602,7 +653,6 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
             fontFamily: 'Arco',
           ),
         ),
-        // If ambiguousMatch is true, show a square check button.
         if (ambiguousMatch) ...[
           SizedBox(width: 8),
           GestureDetector(
@@ -611,7 +661,10 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
               width: 30,
               height: 30,
               decoration: BoxDecoration(
-                border: Border.all(color: const Color.fromARGB(255, 247, 84, 220), width: 3),
+                border: Border.all(
+                  color: const Color.fromARGB(255, 247, 84, 220),
+                  width: 3,
+                ),
               ),
               child: Icon(Icons.check, color: Colors.white, size: 20),
             ),
@@ -626,17 +679,25 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
     print("collectedLetters: $collectedLetters");
     return Scaffold(
       body: Stack(
+        clipBehavior: Clip.hardEdge, // any overflow is clipped
         children: [
           // Background.
-          Container(
-            color: const Color.fromARGB(255, 237, 240, 219),
-          ),
+          // Container(
+          //   color: const Color.fromARGB(255, 237, 240, 219),
+            Positioned.fill(
+              child: Image.asset(
+                'assets/canyon_river_background.png',
+                fit: BoxFit.cover,   // preserves aspect ratio & fills, cropping as needed
+              ),
+            ),
+
+          //),
           // Top info panel (time, score, etc.).
-          // Remove duplicate collectedLetters display from GameUI if needed.
+          // If GameUI displays collectedLetters, consider removing that portion from GameUI.
           GameUI(
             score: score,
             timeLeft: timeLeft,
-            collectedLetters: collectedLetters, // If GameUI displays these, consider removing.
+            collectedLetters: collectedLetters, // You can remove this parameter if GameUI is modified.
             wordSuccess: wordSuccess,
           ),
           // Floating bubbles (interactive).
@@ -666,7 +727,8 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
                   ),
                 ),
               )),
-          // (Optional) Remove this big single letter widget if it's redundant.
+              ..._explosions,
+          // Optional: Big single letter fade on the right (remove if redundant).
           Positioned(
             top: 100,
             right: 50,
@@ -692,7 +754,6 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
             child: Container(
               padding: EdgeInsets.all(12),
               decoration: BoxDecoration(
-                // You can add a background color if desired.
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Center(
@@ -704,4 +765,105 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
       ),
     );
   }
+  
+  
+}
+
+//// Spawns a quick “letter shatter” at (x,y).
+class _BubbleExplosion extends StatefulWidget {
+  final double x, y;
+  final String letter;
+  final VoidCallback onComplete;
+  const _BubbleExplosion({
+    super.key,
+    required this.x,
+    required this.y,
+    required this.letter,
+    required this.onComplete,
+  }) 
+
+  @override
+  __BubbleExplosionState createState() => __BubbleExplosionState();
+}
+
+class __BubbleExplosionState extends State<_BubbleExplosion>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late List<Offset> _pieces;
+  final _rng = Random();
+
+  @override
+  void initState() {
+    super.initState();
+    // 16 fragments, offsets up to ±60px
+    _pieces = List.generate(
+      16,
+      (_) => Offset(
+        _rng.nextDouble() * 120 - 60,
+        _rng.nextDouble() * 120 - 60,
+      ),
+    );
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: 600),
+    )
+      ..addListener(() => setState(() {}))
+      ..addStatusListener((status) {
+        if (status == AnimationStatus.completed) {
+          widget.onComplete();
+        }
+      })
+      ..forward();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Curves.easeOut.transform(_ctrl.value);
+    return Positioned(
+      left: widget.x - 20,
+      top: widget.y - 20,
+      child: CustomPaint(
+        size: Size(40, 40),
+        painter: _ExplosionPainter(_pieces, t, widget.letter, _ctrl.value),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+}
+
+class _ExplosionPainter extends CustomPainter {
+  final List<Offset> pieces;
+  final double t, progress;
+  final String letter;
+
+  _ExplosionPainter(this.pieces, this.t, this.letter, this.progress);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+
+    // draw flying letter fragments in white fading 50%→0%
+    final textStyle = TextStyle(
+      fontSize: 14,
+      fontFamily: 'Arco',
+      color: Colors.white.withOpacity((1 - progress) * 0.5),
+    );
+
+    for (var offset in pieces) {
+      final pos = center + offset * t;
+      final tp = TextPainter(
+        text: TextSpan(text: letter, style: textStyle),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, pos - Offset(tp.width / 2, tp.height / 2));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ExplosionPainter old) => true;
 }
