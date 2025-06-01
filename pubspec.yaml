@@ -74,6 +74,7 @@ flutter:
      - assets/success-word.ogg
      - assets/bad-letter.ogg
      - assets/canyon_river_background.png
+     - assets/treeCoast-level-2.png
 
 
   # An image asset can refer to one or more resolution-specific "variants", see

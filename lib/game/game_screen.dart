@@ -187,7 +187,6 @@ class _SplashScreenState extends State<SplashScreen>
         if (!_audioAllowed) {
           _audioAllowed = true;
           // OPTIONAL: play a very short silent sound to fully unlock context.
-          // If you have a silent asset, you could call:
           // _audioPlayer.play(AssetSource('silence.mp3')).catchError((_) {});
         }
       },
@@ -255,7 +254,7 @@ class _SplashScreenState extends State<SplashScreen>
 }
 
 ////////////////////////////////////////////////////////////////////////
-// BUBBLE WORD GAME WITH PHYSICS
+// BUBBLE WORD GAME WITH PHYSICS AND LEVEL PROGRESSION
 ////////////////////////////////////////////////////////////////////////
 
 class BubbleWordGame extends StatelessWidget {
@@ -355,6 +354,10 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
 
   // --- NEW: track whether user has tapped at least once ---
   bool _audioAllowed = false;
+
+  // --- NEW: level progression variables ---
+  int currentLevel = 1;
+  bool isLevelTransition = false;
 
   @override
   void initState() {
@@ -542,6 +545,10 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
       wordSuccess = true;
       ambiguousMatch = false;
     });
+
+    // Check for level up before showing success animation
+    _checkLevelUp();
+
     _triggerSuccessAnimation();
     _successTimer = Timer(Duration(milliseconds: 1500), () {
       if (!mounted) return;
@@ -552,8 +559,25 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
     });
   }
 
+  void _checkLevelUp() {
+    // Only level up from 1 → 2 when reaching 50 points
+    if (currentLevel == 1 && score >= 50) {
+      setState(() {
+        isLevelTransition = true;
+        currentLevel = 2;
+      });
+      ticker.stop();
+      Timer(Duration(seconds: 2), () {
+        if (!mounted) return;
+        setState(() {
+          isLevelTransition = false;
+        });
+        ticker.start();
+      });
+    }
+  }
+
   void _triggerSuccessAnimation() {
-    // Play a success sound when showing the "BOOM!" dialog
     if (_audioAllowed) {
       _audioPlayer
           .play(AssetSource('success-letter.ogg'))
@@ -668,6 +692,8 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
       bubbles.clear();
       lastTappedLetter = '';
       letterOpacity = 0.0;
+      currentLevel = 1;
+      isLevelTransition = false;
     });
     ticker.start();
     _startTimer();
@@ -720,14 +746,37 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
       },
       child: Scaffold(
         body: Stack(
-          clipBehavior: Clip.hardEdge, // any overflow is clipped
+          clipBehavior: Clip.hardEdge,
           children: [
+            // Background selects based on currentLevel
             Positioned.fill(
               child: Image.asset(
-                'assets/canyon_river_background.png',
+                currentLevel == 1
+                    ? 'assets/canyon_river_background.png'
+                    : 'assets/treeCoast-level-$currentLevel.png',
                 fit: BoxFit.cover,
               ),
             ),
+
+            // If in level transition, overlay "Level X"
+            if (isLevelTransition)
+              Positioned.fill(
+                child: Container(
+                  color: Colors.black54,
+                  child: Center(
+                    child: Text(
+                      'Level $currentLevel',
+                      style: TextStyle(
+                        fontSize: 48,
+                        color: Colors.white,
+                        fontFamily: 'Arco',
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
             GameUI(
               score: score,
               timeLeft: timeLeft,
