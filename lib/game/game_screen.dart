@@ -148,7 +148,7 @@ class _SplashScreenState extends State<SplashScreen>
         // Only play if user has tapped
         if (_audioAllowed) {
           _audioPlayer
-              .play(AssetSource('success-letter.ogg'))
+              .play(AssetSource('success-word.ogg'))
               .catchError((_) {});
         }
       }
@@ -191,7 +191,7 @@ class _SplashScreenState extends State<SplashScreen>
         }
       },
       child: Scaffold(
-        backgroundColor: Colors.white,
+        backgroundColor: Color.fromARGB(255, 6, 17, 22),
         body: AnimatedBuilder(
           animation: _animation,
           builder: (context, child) {
@@ -199,9 +199,16 @@ class _SplashScreenState extends State<SplashScreen>
               alignment: Alignment.topCenter,
               heightFactor: _animation.value,
               child: Container(
-                color: Colors.white,
+                color: const Color.fromARGB(255, 6, 17, 22),
                 child: Stack(
                   children: [
+                    // Background image for intro animation:
+                    Positioned.fill(
+                      child: Image.asset(
+                        'assets/treeCoast.png',
+                        fit: BoxFit.cover,
+                      ),
+                    ),
                     Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -494,7 +501,7 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
     });
     if (_audioAllowed) {
       _audioPlayer
-          .play(AssetSource('success-letter.ogg'))
+          .play(AssetSource('success-word.ogg'))
           .catchError((_) {});
     }
     _fadeTimer = Timer(Duration(seconds: 1), () {
@@ -546,7 +553,7 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
       ambiguousMatch = false;
     });
 
-    // Check for level up before showing success animation
+    // --- UPDATED _checkLevelUp() to trigger on every 50-point multiple ---
     _checkLevelUp();
 
     _triggerSuccessAnimation();
@@ -560,11 +567,23 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
   }
 
   void _checkLevelUp() {
-    // Only level up from 1 → 2 when reaching 50 points
-    if (currentLevel == 1 && score >= 50) {
-      setState(() {
+    // If score has reached or exceeded currentLevel * 50, advance one level
+    if (score >= currentLevel * 50) {
+        setState(() {
         isLevelTransition = true;
-        currentLevel = 2;
+        currentLevel += 1;
+
+        // play the “level up” sound
+        if (_audioAllowed) {
+          _audioPlayer
+            .play(AssetSource('success-letter.ogg'))
+            .catchError((_) {});
+        }
+
+        // give the 10-point bonus
+        score += 10;
+        // reset timer to starting value
+        timeLeft = 30;
       });
       ticker.stop();
       Timer(Duration(seconds: 2), () {
@@ -578,11 +597,11 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
   }
 
   void _triggerSuccessAnimation() {
-    if (_audioAllowed) {
-      _audioPlayer
-          .play(AssetSource('success-letter.ogg'))
-          .catchError((_) {});
-    }
+    if (_audioAllowed && timeLeft > 0) {
+  _audioPlayer
+    .play(AssetSource('word-completed.ogg'))
+    .catchError((_) {});
+}
 
     showDialog(
       context: context,
@@ -604,9 +623,10 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
               child: Text(
                 'BOOM! $score',
                 style: TextStyle(
-                  fontSize: 30,
+                  fontSize: 32,
                   color: Colors.white,
                   fontFamily: 'Arco',
+                  decoration: TextDecoration.none,
                 ),
               ),
             ),
@@ -748,7 +768,7 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
         body: Stack(
           clipBehavior: Clip.hardEdge,
           children: [
-            // Background selects based on currentLevel
+            // Background changes per level:
             Positioned.fill(
               child: Image.asset(
                 currentLevel == 1
@@ -758,7 +778,7 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
               ),
             ),
 
-            // If in level transition, overlay "Level X"
+            // Overlay “Level X” during transition:
             if (isLevelTransition)
               Positioned.fill(
                 child: Container(
