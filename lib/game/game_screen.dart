@@ -6,7 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'dart:async';
-
+import 'dart:ui';
 import 'bubble.dart';
 import 'word_checker.dart';
 import 'game_ui.dart';
@@ -16,24 +16,312 @@ import 'game_ui.dart';
 ////////////////////////////////////////////////////////////////////////
 final WordChecker globalWordChecker = WordChecker();
 
+
+
 ////////////////////////////////////////////////////////////////////////
-// SPLASH SCREEN + RANDOM SMALL BUBBLES + RANDOM SOUNDS
+// SOAP BUBBLE MODEL (unchanged)
+////////////////////////////////////////////////////////////////////////
+class SoapBubble {
+  double initialX;    // horizontal center for oscillation
+  double x;
+  double y;
+  double radius;
+  double speed;       // vertical speed (px/s)
+  double phase;       // phase offset for sine-wave
+  double amplitude;   // horizontal oscillation amplitude
+
+  SoapBubble({
+    required this.initialX,
+    required this.x,
+    required this.y,
+    required this.radius,
+    required this.speed,
+    required this.phase,
+    required this.amplitude,
+  });
+}
+////////////////////////////////////////////////////////////////////////
+// WELCOME SCREEN WITH SOAP BUBBLES + MUTE/UNMUTE
 ////////////////////////////////////////////////////////////////////////
 
-void main() {
-  runApp(SplashScreenApp());
+class WelcomeScreen extends StatefulWidget {
+  @override
+  _WelcomeScreenState createState() => _WelcomeScreenState();
 }
 
-class SplashScreenApp extends StatelessWidget {
+class _WelcomeScreenState extends State<WelcomeScreen>
+    with SingleTickerProviderStateMixin {
+  late AudioPlayer _audioPlayer;
+  bool _isPlaying = false;
+  bool _isMuted = true;
+
+  late Ticker _ticker;
+  final List<SoapBubble> _bubbles = [];
+  final Random _rng = Random();
+  double _screenWidth = 0;
+  double _screenHeight = 0;
+
+  @override
+  void initState() {
+    super.initState();
+
+    // 1) Audio setup (loop), but do NOT auto-play until user taps icon.
+    _audioPlayer = AudioPlayer();
+    _audioPlayer.setReleaseMode(ReleaseMode.loop);
+
+    // 2) Start a Ticker to advance bubble positions ~60FPS.
+    _ticker = createTicker(_onTick)..start();
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    if (_isPlaying) {
+      _audioPlayer.stop().catchError((_) {});
+    }
+    _audioPlayer.dispose();
+    super.dispose();
+  }
+
+  /// Populate exactly 12 soap bubbles. Requires _screenWidth/_screenHeight > 0.
+  void _initializeBubbles() {
+    for (int i = 0; i < 12; i++) {
+      _bubbles.add(_createNewBubble());
+    }
+  }
+
+  /// Create a single SoapBubble starting well below the bottom.
+  SoapBubble _createNewBubble() {
+    // - Random horizontal “center” across full width
+    final double initialX = _rng.nextDouble() * _screenWidth;
+    // - Start Y = screenHeight + [0..screenHeight], so definitely off-screen
+    final double startY = _screenHeight + 50 + _rng.nextDouble() * _screenHeight;
+    // - Radius between 40..80 px
+    final double radius = 40 + _rng.nextDouble() * 40;
+    // - Vertical speed: 100..180 px/s (rise speed)
+    final double speed = 100 + _rng.nextDouble() * 80;
+    // - Random sine‐wave phase
+    final double phase = _rng.nextDouble() * 2 * pi;
+    // - Horizontal oscillation ±(20..50) px
+    final double amplitude = 20 + _rng.nextDouble() * 30;
+
+    return SoapBubble(
+      initialX: initialX,
+      x: initialX,
+      y: startY,
+      radius: radius,
+      speed: speed,
+      phase: phase,
+      amplitude: amplitude,
+    );
+  }
+
+  /// Called ~60×/second by the Ticker. Move each bubble upward & zig-zag.
+  void _onTick(Duration elapsed) {
+    const double dt = 1 / 60; // seconds per tick
+
+    for (int i = 0; i < _bubbles.length; i++) {
+      final b = _bubbles[i];
+
+      // Move upward by speed * dt
+      b.y -= b.speed * dt;
+
+      // Horizontal zig-zag: one full sine oscillation ≈ every 200 px vertical
+      const double freq = 2 * pi / 200;
+      b.x = b.initialX + b.amplitude * sin(freq * b.y + b.phase);
+
+      // If bubble is completely off the top, respawn it below again
+      if (b.y + b.radius < 0) {
+        _bubbles[i] = _createNewBubble();
+      }
+    }
+
+    // Rebuild to show updated positions
+    setState(() {});
+  }
+
+  /// Toggle mute/unmute, starting or stopping the looped “welcome-melody.ogg”
+  void _toggleMute() {
+    if (_isMuted) {
+      _audioPlayer
+          .play(AssetSource('welcome-melody.ogg'))
+          .catchError((_) {});
+      setState(() {
+        _isPlaying = true;
+        _isMuted = false;
+      });
+    } else {
+      _audioPlayer.stop().catchError((_) {});
+      setState(() {
+        _isPlaying = false;
+        _isMuted = true;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      home: SplashScreen(),
+    // 1) Get current screen size from MediaQuery
+    final size = MediaQuery.of(context).size;
+    if (size.width > 0 && size.height > 0) {
+      // If width/height just became non-zero & bubbles not yet initialized:
+      if (_screenWidth == 0 && _screenHeight == 0) {
+        _screenWidth = size.width;
+        _screenHeight = size.height;
+        _initializeBubbles();
+      }
+    }
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      // Audio is only toggled via the icon, not by tapping anywhere else.
+      child: Scaffold(
+        body: Stack(
+          children: [
+            // 1) Fullscreen background
+            Positioned.fill(
+              child: Image.asset(
+                'assets/baby-background.png',
+                fit: BoxFit.cover,
+              ),
+            ),
+
+            // 2) Draw each soap bubble (fish-eye + dimming)
+            for (var b in _bubbles)
+              Positioned(
+                left: b.x - b.radius,
+                top: b.y - b.radius,
+                child: ClipOval(
+                  child: SizedBox(
+                    width: b.radius * 2,
+                    height: b.radius * 2,
+                    child: Stack(
+                      children: [
+                        // a) Fish-eye transform:
+                        Transform(
+                          transform: Matrix4.identity()
+                            ..translate(b.radius, b.radius)
+                            ..scale(1.2, 1.2)             // zoom factor
+                            ..translate(-b.x, -b.y),
+                          child: Image.asset(
+                            'assets/baby-background.png',
+                            width: _screenWidth,
+                            height: _screenHeight,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                        // b) Dim the bubble interior by overlaying 30%-black
+                        Container(
+                          width: b.radius * 2,
+                          height: b.radius * 2,
+                          color: Colors.black.withValues(alpha:0.3),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
+            // 3) “Are you want to play?” + YES/NO buttons at ~1/3 down
+            Align(
+              alignment: Alignment(0, -0.53),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    color: Colors.black54,
+                    padding:
+                        EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+                    child: Text(
+                      'Are you want to play?',
+                      style: TextStyle(
+                        fontSize: 28,
+                        color: const Color.fromARGB(255, 245, 188, 3),
+                        fontFamily: 'Arco',
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      ElevatedButton(
+                        onPressed: () {
+                          // Stop the melody if playing
+                          if (_isPlaying) {
+                            _audioPlayer.stop().catchError((_) {});
+                          }
+                          Navigator.of(context).pushReplacement(
+                            MaterialPageRoute(
+                              builder: (context) => SplashScreen(),
+                            ),
+                          );
+                        },
+                        child: Text(
+                          'YES',
+                          style: TextStyle(
+                            fontSize: 24,
+                            fontFamily: 'Arco',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 40),
+                      ElevatedButton(
+                        onPressed: () {
+                          if (_isPlaying) {
+                            _audioPlayer.stop().catchError((_) {});
+                          }
+                          SystemNavigator.pop();
+                        },
+                        child: Text(
+                          'NO',
+                          style: TextStyle(
+                            fontSize: 24,
+                            fontFamily: 'Arco',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
+            // 4) Mute/Speaker icon in top-right
+            Positioned(
+              top: 40,
+              right: 16,
+              child: IconButton(
+                iconSize: 32,
+                color: const Color.fromARGB(255, 3, 233, 3),
+                icon: Icon(
+                  _isMuted ? Icons.volume_off : Icons.volume_up,
+                ),
+                onPressed: _toggleMute,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
+///////////////////////////////////////////////////////////////////////
+// SPARK MODEL (for logo sparkles)
+////////////////////////////////////////////////////////////////////////
+class _Spark {
+  /// Relative position in [0..1] × [0..1] over the 150×150 logo.
+  final double rx, ry;
+  /// UniqueKey used to track its AnimationController.
+  final UniqueKey key;
 
+  _Spark({ required this.rx, required this.ry }) : key = UniqueKey();
+}
+
+////////////////////////////////////////////////////////////////////////
+// SMALL “SODA” BUBBLE MODEL (unchanged from before)
+////////////////////////////////////////////////////////////////////////
 class SplashSmallBubble {
   double x;
   double y;
@@ -50,6 +338,10 @@ class SplashSmallBubble {
   });
 }
 
+////////////////////////////////////////////////////////////////////////
+// SPLASH SCREEN WITH SPARKS + SODA BUBBLES + RANDOM SOUNDS
+////////////////////////////////////////////////////////////////////////
+
 class SplashScreen extends StatefulWidget {
   @override
   _SplashScreenState createState() => _SplashScreenState();
@@ -57,32 +349,41 @@ class SplashScreen extends StatefulWidget {
 
 class _SplashScreenState extends State<SplashScreen>
     with TickerProviderStateMixin {
+  // Animation for top‐to‐bottom reveal
   late AnimationController _controller;
   late Animation<double> _animation;
+
+  // “Soda” bubbles
   late Ticker _bubbleTicker;
   final Random rng = Random();
   final List<SplashSmallBubble> sodaBubbles = [];
   late AudioPlayer _audioPlayer;
-
   final List<String> bubbleSounds = [
     'bubble_sound.ogg',
     'bubble_sound-2.ogg',
     'bubble_sound-3.ogg',
   ];
-
   double _timeAccumulator = 0.0;
   double _nextSoundDelay = 2.0;
-
-  // --- NEW: track whether user has tapped at least once ---
   bool _audioAllowed = false;
+
+  // Sparks over the Webaby logo
+  late Ticker _sparkTicker;
+  final List<_Spark> _sparks = [];
+  final Map<UniqueKey, AnimationController> _sparkControllers = {};
 
   @override
   void initState() {
     super.initState();
-    _audioPlayer = AudioPlayer();
 
+    // 1) Audio setup (loop) for splash sounds; do not auto-play
+    _audioPlayer = AudioPlayer();
+    _audioPlayer.setReleaseMode(ReleaseMode.loop);
+
+    // 2) Load dictionary
     _initGame();
 
+    // 3) Top-to-bottom reveal animation
     _controller = AnimationController(
       duration: Duration(seconds: 8),
       vsync: this,
@@ -98,8 +399,10 @@ class _SplashScreenState extends State<SplashScreen>
       });
     });
 
+    // 4) Initialize soda bubbles
     _initSodaBubbles();
 
+    // 5) Ticker to update soda bubbles & random sounds
     DateTime? lastUpdate;
     _bubbleTicker = createTicker((now) {
       final current = DateTime.now();
@@ -115,6 +418,26 @@ class _SplashScreenState extends State<SplashScreen>
       _handleRandomSounds(dtSeconds);
     });
     _bubbleTicker.start();
+
+    // 6) Ticker to spawn & fade sparks
+    _sparkTicker = createTicker((_) {
+      // a) 15% chance per tick to spawn a new spark
+      if (rng.nextDouble() < 0.15) {
+        _spawnSpark();
+      }
+      // b) Remove any finished sparks
+      final finished = _sparkControllers.entries
+          .where((e) => e.value.status == AnimationStatus.completed)
+          .map((e) => e.key)
+          .toList();
+      for (var key in finished) {
+        _sparkControllers[key]?.dispose();
+        _sparkControllers.remove(key);
+        _sparks.removeWhere((s) => s.key == key);
+      }
+      setState(() {});
+    });
+    _sparkTicker.start();
   }
 
   Future<void> _initGame() async {
@@ -130,7 +453,7 @@ class _SplashScreenState extends State<SplashScreen>
         radius: 5 + rng.nextDouble() * 15,
         speed: 0.5 + rng.nextDouble() * 1.5,
         color: Colors.primaries[rng.nextInt(Colors.primaries.length)]
-            .withOpacity(rng.nextDouble() * 0.5 + 0.4),
+            .withValues(alpha:rng.nextDouble() * 0.5 + 0.4),
       ));
     }
   }
@@ -144,8 +467,7 @@ class _SplashScreenState extends State<SplashScreen>
         sb.radius = 5 + rng.nextDouble() * 15;
         sb.speed = 0.5 + rng.nextDouble() * 1.5;
         sb.color = Colors.primaries[rng.nextInt(Colors.primaries.length)]
-            .withOpacity(rng.nextDouble() * 0.5 + 0.4);
-        // Only play if user has tapped
+            .withValues(alpha:rng.nextDouble() * 0.5 + 0.4);
         if (_audioAllowed) {
           _audioPlayer
               .play(AssetSource('success-word.ogg'))
@@ -158,38 +480,57 @@ class _SplashScreenState extends State<SplashScreen>
   void _handleRandomSounds(double dt) {
     _timeAccumulator += dt;
     if (_timeAccumulator >= _nextSoundDelay) {
-      final soundIndex = rng.nextInt(bubbleSounds.length);
-      final soundPath = bubbleSounds[soundIndex];
+      final soundPath = bubbleSounds[rng.nextInt(bubbleSounds.length)];
       if (_audioAllowed) {
-        _audioPlayer
-            .play(AssetSource(soundPath))
-            .catchError((_) {});
+        _audioPlayer.play(AssetSource(soundPath)).catchError((_) {});
       }
       _timeAccumulator = 0.0;
       _nextSoundDelay = 0.5 + rng.nextDouble() * 1.5;
     }
   }
 
+  /// Spawn a single spark at a random relative position (rx,ry) inside 150×150 logo,
+  /// then animate its opacity from 1→0 over 300ms.
+  void _spawnSpark() {
+    final double rx = rng.nextDouble();
+    final double ry = rng.nextDouble();
+    final spark = _Spark(rx: rx, ry: ry);
+    _sparks.add(spark);
+
+    final controller = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: 300),
+    )
+      ..addListener(() => setState(() {}))
+      ..forward();
+
+    _sparkControllers[spark.key] = controller;
+  }
+
   @override
   void dispose() {
     _controller.dispose();
     _bubbleTicker.dispose();
+    for (var ctrl in _sparkControllers.values) {
+      ctrl.dispose();
+    }
+    _sparkControllers.clear();
+    _sparkTicker.dispose();
     _audioPlayer.dispose();
     super.dispose();
   }
 
+  void _toggleAudioAllowed() {
+    if (!_audioAllowed) {
+      _audioAllowed = true;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Wrap entire splash UI in GestureDetector so that any tap unlocks audio
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: () {
-        if (!_audioAllowed) {
-          _audioAllowed = true;
-          // OPTIONAL: play a very short silent sound to fully unlock context.
-          // _audioPlayer.play(AssetSource('silence.mp3')).catchError((_) {});
-        }
-      },
+      onTap: _toggleAudioAllowed,
       child: Scaffold(
         backgroundColor: Color.fromARGB(255, 6, 17, 22),
         body: AnimatedBuilder(
@@ -202,13 +543,15 @@ class _SplashScreenState extends State<SplashScreen>
                 color: const Color.fromARGB(255, 6, 17, 22),
                 child: Stack(
                   children: [
-                    // Background image for intro animation:
+                    // 1) Background image
                     Positioned.fill(
                       child: Image.asset(
                         'assets/treeCoast.png',
                         fit: BoxFit.cover,
                       ),
                     ),
+
+                    // 2) Center column: "Webaby presents" + logo + ad
                     Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -222,21 +565,61 @@ class _SplashScreenState extends State<SplashScreen>
                               fontFamily: 'Arco',
                             ),
                           ),
-                          SizedBox(height: 20),
-                          Image.asset(
-                            'webaby-logo.png',
+                          const SizedBox(height: 20),
+
+                          // ─── Webaby logo with spark overlay ───
+                          SizedBox(
                             width: 150,
                             height: 150,
+                            child: Stack(
+                              children: [
+                                // a) The static logo
+                                Image.asset(
+                                  'assets/webaby-logo.png',
+                                  width: 150,
+                                  height: 150,
+                                  fit: BoxFit.contain,
+                                ),
+                                // b) Overlay each spark circle
+                                for (var spark in _sparks)
+                                  Positioned(
+                                    left: spark.rx * 150 - 8,
+                                    top:  spark.ry * 150 - 8,
+                                    child: Opacity(
+                                      opacity: 1.0 -
+                                          (_sparkControllers[spark.key]?.value ?? 0.0),
+                                      child: Container(
+                                        width: 16,
+                                        height: 16,
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          gradient: RadialGradient(
+                                            colors: [
+                                              Colors.yellow.withOpacity(0.9),
+                                              Colors.orange.withOpacity(0.6),
+                                              Colors.transparent,
+                                            ],
+                                            stops: [0.0, 0.5, 1.0],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
                           ),
-                          SizedBox(height: 20),
+
+                          const SizedBox(height: 20),
                           Image.asset(
-                            'webaby-bubble-ad.png',
+                            'assets/webaby-bubble-ad.png',
                             width: 300,
                             height: 200,
                           ),
                         ],
                       ),
                     ),
+
+                    // 3) “Soda” bubbles floating
                     ...sodaBubbles.map((sb) => Positioned(
                           left: sb.x,
                           top: sb.y,
@@ -249,6 +632,7 @@ class _SplashScreenState extends State<SplashScreen>
                             ),
                           ),
                         )),
+
                   ],
                 ),
               ),
@@ -259,7 +643,6 @@ class _SplashScreenState extends State<SplashScreen>
     );
   }
 }
-
 ////////////////////////////////////////////////////////////////////////
 // BUBBLE WORD GAME WITH PHYSICS AND LEVEL PROGRESSION
 ////////////////////////////////////////////////////////////////////////
@@ -617,7 +1000,7 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
             height: 200,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: Colors.green.withOpacity(0.7),
+              color: Colors.green.withValues(alpha:0.7),
             ),
             child: Center(
               child: Text(
@@ -727,7 +1110,7 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
           collectedLetters.join(" "),
           style: TextStyle(
             fontSize: 28,
-            color: errorInCollectedLetters ? Colors.red : Colors.white,
+            color: errorInCollectedLetters ? Colors.red : Colors.white.withValues(alpha:1),
             fontFamily: 'Arco',
           ),
         ),
@@ -744,7 +1127,7 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
                   width: 3,
                 ),
               ),
-              child: Icon(Icons.check, color: Colors.white, size: 20),
+              child: Icon(Icons.check, color: Colors.white.withValues(alpha:1), size: 20),
             ),
           ),
         ],
@@ -788,7 +1171,7 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
                       'Level $currentLevel',
                       style: TextStyle(
                         fontSize: 48,
-                        color: Colors.white,
+                        color: Colors.white.withValues(alpha:0.7),
                         fontFamily: 'Arco',
                         fontWeight: FontWeight.bold,
                       ),
@@ -934,7 +1317,7 @@ class _ExplosionPainter extends CustomPainter {
     final textStyle = TextStyle(
       fontSize: 14,
       fontFamily: 'Arco',
-      color: Colors.white.withOpacity((1 - progress) * 0.5),
+      color: Colors.white.withValues(alpha:(((1 - progress) * 0.5))),
     );
     for (var offset in pieces) {
       final pos = center + offset * t;
@@ -949,3 +1332,19 @@ class _ExplosionPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _ExplosionPainter old) => true;
 }
+
+
+// ENTRY POINT
+
+void main() {
+
+  runApp(MaterialApp(
+
+    debugShowCheckedModeBanner: false,
+
+    home: WelcomeScreen(),
+
+  ));
+
+}
+

@@ -1,3 +1,19 @@
+# Release signing credentials
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+/android/key.properties
+
+# Local environments and release artifacts
+.env
+.env.*
+!.env.example
+*.aab
+*.apk
+*.apks
+
 # Miscellaneous
 *.class
 *.log
