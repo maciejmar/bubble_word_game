@@ -1,6 +1,7 @@
 import unittest
 
 from verify_play_release import (
+    format_api_error,
     has_completed_internal_release,
     production_track_update,
     require_unused_higher_code,
@@ -44,6 +45,26 @@ class PlayVersionCodeTests(unittest.TestCase):
                 32, {"releases": [{"status": "inProgress", "versionCodes": [32]}]}
             )
         )
+
+    def test_api_error_summary_includes_stage_and_google_reason(self):
+        class Response:
+            status = 400
+
+        class ApiError(Exception):
+            resp = Response()
+            content = (
+                b'{"error":{"message":"Precondition check failed.","status":"FAILED_PRECONDITION",'
+                b'"details":[{"reason":"CHANGES_ALREADY_IN_REVIEW","metadata":{"method":"edits.commit"}}]}}'
+            )
+            uri = "https://androidpublisher.googleapis.com/path?access_token=do-not-print"
+
+        summary = format_api_error(ApiError("failure"), stage="commit edit")
+
+        self.assertIn("commit edit", summary)
+        self.assertIn("HTTP 400", summary)
+        self.assertIn("CHANGES_ALREADY_IN_REVIEW", summary)
+        self.assertIn("edits.commit", summary)
+        self.assertNotIn("access_token", summary)
 
     def test_prepares_full_production_rollout_from_internal_release(self):
         internal = {

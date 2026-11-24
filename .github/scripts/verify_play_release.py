@@ -6,10 +6,18 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
 PLAY_SCOPE = "https://www.googleapis.com/auth/androidpublisher"
+
+
+class PlayApiFailure(RuntimeError):
+    def __init__(self, stage: str, cause: Exception):
+        super().__init__(str(cause))
+        self.stage = stage
+        self.cause = cause
 
 
 def version_code_from_pubspec(text: str) -> int:
@@ -38,6 +46,47 @@ def track_readback_summary(tracks: dict[str, Any]) -> str:
         ) or "empty"
         parts.append(f"{name}=[{summary}]")
     return "; ".join(parts)
+
+
+def format_api_error(error: Exception, stage: str | None = None) -> str:
+    cause = getattr(error, "cause", error)
+    stage = stage or getattr(error, "stage", None)
+    status = getattr(getattr(cause, "resp", None), "status", None)
+    message = ""
+    reasons: list[str] = []
+    methods: list[str] = []
+    content = getattr(cause, "content", None)
+    if content:
+        try:
+            payload = json.loads(content.decode("utf-8") if isinstance(content, bytes) else content)
+            details = payload.get("error", {})
+            message = str(details.get("message", ""))
+            if details.get("status"):
+                reasons.append(str(details["status"]))
+            for item in details.get("errors", []):
+                if item.get("reason"):
+                    reasons.append(str(item["reason"]))
+            for item in details.get("details", []):
+                if item.get("reason"):
+                    reasons.append(str(item["reason"]))
+                method = item.get("metadata", {}).get("method")
+                if method:
+                    methods.append(str(method))
+        except (AttributeError, TypeError, ValueError):
+            message = ""
+
+    parts = [f"{stage}:" if stage else "", type(cause).__name__]
+    if status is not None:
+        parts.append(f"HTTP {status}")
+    if reasons:
+        parts.append(", ".join(dict.fromkeys(reasons)))
+    if methods:
+        parts.append(", ".join(dict.fromkeys(methods)))
+    if message:
+        parts.append(message)
+    elif not content:
+        parts.append(str(cause))
+    return " ".join(part for part in parts if part).replace("\r", " ").replace("\n", " ")[:500]
 
 
 def require_unused_higher_code(expected: int, tracks: dict[str, Any]) -> None:
@@ -213,10 +262,13 @@ def promote_to_production() -> None:
     expected = version_code_from_pubspec(Path("pubspec.yaml").read_text())
     package_name = os.environ["PACKAGE_NAME"]
     service = play_service()
-    edit = service.edits().insert(packageName=package_name, body={}).execute()
-    edit_id = edit["id"]
+    edit_id = None
     committed = False
+    stage = "create edit"
     try:
+        edit = service.edits().insert(packageName=package_name, body={}).execute()
+        edit_id = edit["id"]
+        stage = "read tracks"
         tracks = service.edits().tracks().list(
             packageName=package_name, editId=edit_id
         ).execute()
@@ -228,22 +280,36 @@ def promote_to_production() -> None:
             print(f"versionCode {expected} is already completed on production; no update needed.")
             return
         if production_track is None:
+            stage = "create production track release"
             service.edits().tracks().create(
                 packageName=package_name, editId=edit_id, body=update
             ).execute()
         else:
+            stage = "update production track release"
             service.edits().tracks().update(
                 packageName=package_name,
                 editId=edit_id,
                 track="production",
                 body=update,
             ).execute()
+        stage = "commit edit"
         service.edits().commit(packageName=package_name, editId=edit_id).execute()
         committed = True
         print(f"Promoted Internal versionCode {expected} to production at 100%.")
+    except Exception as exc:
+        raise PlayApiFailure(stage, exc) from exc
     finally:
-        if not committed:
-            service.edits().delete(packageName=package_name, editId=edit_id).execute()
+        if not committed and edit_id is not None:
+            try:
+                service.edits().delete(packageName=package_name, editId=edit_id).execute()
+            except Exception as cleanup_error:
+                if sys.exc_info()[0] is None:
+                    raise PlayApiFailure("delete uncommitted edit", cleanup_error) from cleanup_error
+                print(
+                    "Cleanup failed after the primary Play API error: "
+                    + format_api_error(cleanup_error, "delete uncommitted edit"),
+                    file=sys.stderr,
+                )
 
 
 def verify_production() -> None:
@@ -285,27 +351,7 @@ if __name__ == "__main__":
         else:
             verify_production()
     except Exception as exc:
-        status = getattr(getattr(exc, "resp", None), "status", None)
-        message = ""
-        content = getattr(exc, "content", None)
-        if content:
-            try:
-                payload = json.loads(content.decode("utf-8") if isinstance(content, bytes) else content)
-                error = payload.get("error", {})
-                message = str(error.get("message", ""))
-                reasons = [str(item.get("reason")) for item in error.get("errors", []) if item.get("reason")]
-                if reasons:
-                    message = f"{message} ({', '.join(reasons)})"
-            except (AttributeError, TypeError, ValueError):
-                message = ""
-        summary = f"{type(exc).__name__}"
-        if status is not None:
-            summary += f" HTTP {status}"
-        if message:
-            summary += f": {message}"
-        else:
-            summary += f": {exc}"
-        summary = summary.replace("\r", " ").replace("\n", " ")[:500]
+        summary = format_api_error(exc)
         print(
             "::error file=.github/scripts/verify_play_release.py,line=1,title=Google Play API error::"
             + summary
