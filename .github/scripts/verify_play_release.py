@@ -188,9 +188,18 @@ def preflight_production() -> None:
         update = production_track_update(
             expected, by_name.get("internal", {}), by_name.get("production")
         )
+        readback = track_readback_summary(tracks)
+        summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary_path:
+            with open(summary_path, "a", encoding="utf-8") as summary_file:
+                summary_file.write(
+                    "### Google Play track readback\n\n"
+                    f"- Proposed versionCode: `{expected}`\n"
+                    f"- Current tracks: `{readback}`\n"
+                )
         print(
             "::notice file=.github/scripts/verify_play_release.py,line=1,title=Play track readback::"
-            + track_readback_summary(tracks)
+            + readback
         )
         if update is None:
             print(f"Production preflight passed: versionCode {expected} is already completed.")
