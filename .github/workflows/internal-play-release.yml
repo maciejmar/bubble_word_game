@@ -9,6 +9,8 @@ on:
         type: boolean
         default: false
   push:
+    branches:
+      - fix/android-gradle-flutter-3.50
     tags:
       - 'internal-v*'
 
@@ -79,10 +81,20 @@ jobs:
       - name: Run game tests
         run: flutter test test/game
 
+      - name: Install Google Play API client
+        run: python -m pip install --disable-pip-version-check google-api-python-client
+
+      - name: Check Play versionCode availability
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          PACKAGE_NAME: io.webaby.bubble_word_game
+        run: python .github/scripts/verify_play_release.py --check-unused
+
       - name: Build signed Android App Bundle
         run: flutter build appbundle --release
 
       - name: Upload to Google Play Internal testing
+        if: ${{ startsWith(github.ref, 'refs/tags/internal-v') || (github.event_name == 'workflow_dispatch' && inputs.confirm_upload) }}
         uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5 # v1.1.5
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
@@ -90,6 +102,13 @@ jobs:
           releaseFiles: build/app/outputs/bundle/release/app-release.aab
           tracks: internal
           status: completed
+
+      - name: Verify Google Play Internal track
+        if: ${{ startsWith(github.ref, 'refs/tags/internal-v') || (github.event_name == 'workflow_dispatch' && inputs.confirm_upload) }}
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          PACKAGE_NAME: io.webaby.bubble_word_game
+        run: python .github/scripts/verify_play_release.py --verify-internal
 
       - name: Remove signing material
         if: always()
