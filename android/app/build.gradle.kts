@@ -1,5 +1,4 @@
 import java.util.Properties
-import com.android.build.api.dsl.ApplicationExtension
 
 plugins {
     id("com.android.application")
@@ -15,7 +14,7 @@ val keystoreProperties = Properties().apply {
     }
 }
 
-extensions.configure<ApplicationExtension> {
+android {
     // Specify your app's namespace. This replaces the package attribute from the AndroidManifest.xml.
     namespace = "io.webaby.bubble_word_game"
 
