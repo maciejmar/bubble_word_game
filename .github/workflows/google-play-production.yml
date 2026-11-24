@@ -1,0 +1,74 @@
+name: Google Play Production Promotion
+
+on:
+  push:
+    branches:
+      - fix/android-gradle-flutter-3.50
+    tags:
+      - 'production-v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: play-production-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    if: ${{ github.ref_type == 'branch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: play-production
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Test promotion logic
+        run: python -m unittest discover -s .github/scripts -p 'test_*.py'
+
+      - name: Install Google Play API client
+        run: python -m pip install --disable-pip-version-check google-api-python-client
+
+      - name: Validate production credentials
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: test -n "$PLAY_SERVICE_ACCOUNT_JSON"
+
+      - name: Check production promotion readiness
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          PACKAGE_NAME: io.webaby.bubble_word_game
+        run: python .github/scripts/verify_play_release.py --preflight-production
+
+  promote:
+    if: ${{ startsWith(github.ref, 'refs/tags/production-v') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: play-production
+    steps:
+      - name: Check out tagged release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Test promotion logic
+        run: python -m unittest discover -s .github/scripts -p 'test_*.py'
+
+      - name: Install Google Play API client
+        run: python -m pip install --disable-pip-version-check google-api-python-client
+
+      - name: Validate production credentials
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: test -n "$PLAY_SERVICE_ACCOUNT_JSON"
+
+      - name: Promote Internal release to Production at 100%
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          PACKAGE_NAME: io.webaby.bubble_word_game
+        run: python .github/scripts/verify_play_release.py --promote-production
+
+      - name: Verify Production release
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          PACKAGE_NAME: io.webaby.bubble_word_game
+        run: python .github/scripts/verify_play_release.py --verify-production

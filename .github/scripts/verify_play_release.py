@@ -46,6 +46,73 @@ def has_completed_internal_release(expected: int, track: dict[str, Any]) -> bool
     )
 
 
+def production_track_update(
+    expected: int,
+    internal_track: dict[str, Any],
+    production_track: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    internal_release = next(
+        (
+            release
+            for release in internal_track.get("releases", [])
+            if release.get("status") == "completed"
+            and expected in {int(code) for code in release.get("versionCodes", [])}
+        ),
+        None,
+    )
+    if internal_release is None:
+        raise ValueError(f"versionCode {expected} is not a completed Internal release")
+
+    production_releases = (production_track or {}).get("releases", [])
+    matching = [
+        release
+        for release in production_releases
+        if expected in {int(code) for code in release.get("versionCodes", [])}
+    ]
+    other_active = [
+        release
+        for release in production_releases
+        if release not in matching
+        and release.get("status") in {"inProgress", "halted", "draft"}
+    ]
+    if other_active:
+        raise ValueError("an active production rollout exists; refusing to overwrite it")
+
+    if matching:
+        existing = matching[0]
+        status = existing.get("status")
+        codes = {int(code) for code in existing.get("versionCodes", [])}
+        if status == "completed":
+            return None
+        if status != "inProgress" or codes != {expected}:
+            raise ValueError(
+                f"versionCode {expected} already exists on production with status {status}"
+            )
+        release = dict(existing)
+        release["versionCodes"] = [str(expected)]
+        release["status"] = "completed"
+        release.pop("userFraction", None)
+        release.pop("countryTargeting", None)
+    else:
+        production_codes = version_codes_from_tracks(
+            {"tracks": [production_track] if production_track else []}
+        )
+        highest = max(production_codes, default=0)
+        if expected <= highest:
+            raise ValueError(
+                f"versionCode {expected} is not higher than production versionCode {highest}"
+            )
+        release = {"versionCodes": [str(expected)], "status": "completed"}
+        if internal_release.get("name"):
+            release["name"] = internal_release["name"]
+        if internal_release.get("releaseNotes"):
+            release["releaseNotes"] = internal_release["releaseNotes"]
+        if internal_release.get("inAppUpdatePriority") is not None:
+            release["inAppUpdatePriority"] = internal_release["inAppUpdatePriority"]
+
+    return {"track": "production", "releases": [release]}
+
+
 def play_service():
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
@@ -97,6 +164,78 @@ def verify_internal() -> None:
     with_edit(check)
 
 
+def preflight_production() -> None:
+    expected = version_code_from_pubspec(Path("pubspec.yaml").read_text())
+
+    def check(service, package_name, edit_id):
+        tracks = service.edits().tracks().list(
+            packageName=package_name, editId=edit_id
+        ).execute()
+        by_name = {track.get("track"): track for track in tracks.get("tracks", [])}
+        update = production_track_update(
+            expected, by_name.get("internal", {}), by_name.get("production")
+        )
+        if update is None:
+            print(f"Production preflight passed: versionCode {expected} is already completed.")
+        else:
+            print(f"Production preflight passed: Internal versionCode {expected} can be promoted at 100%.")
+
+    with_edit(check)
+
+
+def promote_to_production() -> None:
+    expected = version_code_from_pubspec(Path("pubspec.yaml").read_text())
+    package_name = os.environ["PACKAGE_NAME"]
+    service = play_service()
+    edit = service.edits().insert(packageName=package_name, body={}).execute()
+    edit_id = edit["id"]
+    committed = False
+    try:
+        tracks = service.edits().tracks().list(
+            packageName=package_name, editId=edit_id
+        ).execute()
+        by_name = {track.get("track"): track for track in tracks.get("tracks", [])}
+        internal_track = by_name.get("internal", {})
+        production_track = by_name.get("production")
+        update = production_track_update(expected, internal_track, production_track)
+        if update is None:
+            print(f"versionCode {expected} is already completed on production; no update needed.")
+            return
+        if production_track is None:
+            service.edits().tracks().create(
+                packageName=package_name, editId=edit_id, body=update
+            ).execute()
+        else:
+            service.edits().tracks().update(
+                packageName=package_name,
+                editId=edit_id,
+                track="production",
+                body=update,
+            ).execute()
+        service.edits().commit(packageName=package_name, editId=edit_id).execute()
+        committed = True
+        print(f"Promoted Internal versionCode {expected} to production at 100%.")
+    finally:
+        if not committed:
+            service.edits().delete(packageName=package_name, editId=edit_id).execute()
+
+
+def verify_production() -> None:
+    expected = version_code_from_pubspec(Path("pubspec.yaml").read_text())
+
+    def check(service, package_name, edit_id):
+        track = service.edits().tracks().get(
+            packageName=package_name, editId=edit_id, track="production"
+        ).execute()
+        if not has_completed_internal_release(expected, track):
+            raise ValueError(
+                f"versionCode {expected} was not found as a completed production release"
+            )
+        print(f"Verified Google Play production contains completed versionCode {expected}.")
+
+    with_edit(check)
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -104,8 +243,20 @@ if __name__ == "__main__":
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument("--check-unused", action="store_true")
     modes.add_argument("--verify-internal", action="store_true")
+    modes.add_argument("--preflight-production", action="store_true")
+    modes.add_argument("--promote-production", action="store_true")
+    modes.add_argument("--verify-production", action="store_true")
     args = parser.parse_args()
     try:
-        check_unused() if args.check_unused else verify_internal()
+        if args.check_unused:
+            check_unused()
+        elif args.verify_internal:
+            verify_internal()
+        elif args.preflight_production:
+            preflight_production()
+        elif args.promote_production:
+            promote_to_production()
+        else:
+            verify_production()
     except Exception as exc:
         raise SystemExit(f"Google Play verification failed: {type(exc).__name__}: {exc}") from None

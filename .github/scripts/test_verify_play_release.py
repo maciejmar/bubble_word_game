@@ -2,6 +2,7 @@ import unittest
 
 from verify_play_release import (
     has_completed_internal_release,
+    production_track_update,
     require_unused_higher_code,
     version_code_from_pubspec,
     version_codes_from_tracks,
@@ -43,6 +44,58 @@ class PlayVersionCodeTests(unittest.TestCase):
                 32, {"releases": [{"status": "inProgress", "versionCodes": [32]}]}
             )
         )
+
+    def test_prepares_full_production_rollout_from_internal_release(self):
+        internal = {
+            "releases": [
+                {
+                    "name": "v1.0.31",
+                    "status": "completed",
+                    "versionCodes": ["32"],
+                    "releaseNotes": [{"language": "en-US", "text": "New level"}],
+                }
+            ]
+        }
+        production = {"track": "production", "releases": [{"status": "completed", "versionCodes": [31]}]}
+
+        update = production_track_update(32, internal, production)
+
+        self.assertEqual(update["track"], "production")
+        self.assertEqual(update["releases"][0]["status"], "completed")
+        self.assertEqual(update["releases"][0]["versionCodes"], ["32"])
+        self.assertNotIn("userFraction", update["releases"][0])
+        self.assertEqual(update["releases"][0]["releaseNotes"], internal["releases"][0]["releaseNotes"])
+
+    def test_finishes_matching_staged_production_rollout(self):
+        internal = {"releases": [{"status": "completed", "versionCodes": [32]}]}
+        production = {
+            "track": "production",
+            "releases": [{"status": "inProgress", "userFraction": 0.1, "versionCodes": ["32"]}],
+        }
+
+        update = production_track_update(32, internal, production)
+
+        self.assertEqual(update["releases"][0]["status"], "completed")
+        self.assertNotIn("userFraction", update["releases"][0])
+
+    def test_is_idempotent_when_version_is_already_completed_in_production(self):
+        internal = {"releases": [{"status": "completed", "versionCodes": [32]}]}
+        production = {"track": "production", "releases": [{"status": "completed", "versionCodes": [32]}]}
+
+        self.assertIsNone(production_track_update(32, internal, production))
+
+    def test_refuses_to_overwrite_another_active_production_rollout(self):
+        internal = {"releases": [{"status": "completed", "versionCodes": [32]}]}
+        production = {"track": "production", "releases": [{"status": "inProgress", "versionCodes": [31]}]}
+
+        with self.assertRaisesRegex(ValueError, "active production rollout"):
+            production_track_update(32, internal, production)
+
+    def test_refuses_to_promote_a_version_not_completed_on_internal(self):
+        internal = {"releases": [{"status": "inProgress", "versionCodes": [32]}]}
+
+        with self.assertRaisesRegex(ValueError, "completed Internal release"):
+            production_track_update(32, internal, {"track": "production", "releases": []})
 
 
 if __name__ == "__main__":
