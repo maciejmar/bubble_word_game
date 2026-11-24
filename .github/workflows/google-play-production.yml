@@ -19,7 +19,7 @@ jobs:
     if: ${{ github.ref_type == 'branch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: play-production
+    environment: play-internal
     steps:
       - name: Check out branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,7 +45,7 @@ jobs:
     if: ${{ startsWith(github.ref, 'refs/tags/production-v') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: play-production
+    environment: play-internal
     steps:
       - name: Check out tagged release
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
