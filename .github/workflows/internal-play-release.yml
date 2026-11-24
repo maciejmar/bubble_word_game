@@ -8,6 +8,9 @@ on:
         required: true
         type: boolean
         default: false
+  push:
+    tags:
+      - 'internal-v*'
 
 permissions:
   contents: read
@@ -18,7 +21,7 @@ concurrency:
 
 jobs:
   release:
-    if: ${{ inputs.confirm_upload }}
+    if: ${{ github.event_name == 'push' || inputs.confirm_upload }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: play-internal
