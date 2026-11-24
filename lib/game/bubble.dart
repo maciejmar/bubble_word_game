@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 class Bubble {
   double x;
   double y;
-  double vx;
-  double vy;
+  double vx; // horizontal velocity in logical pixels per second
+  double vy; // vertical velocity in logical pixels per second
   double radius;
   String letter;
   bool toBeRemoved = false;
@@ -18,6 +18,11 @@ class Bubble {
     required this.radius,
     required this.letter,
   });
+
+  void advanceBy(double deltaSeconds) {
+    x += vx * deltaSeconds;
+    y += vy * deltaSeconds;
+  }
 }
 
 class BubbleGenerator {
@@ -26,7 +31,8 @@ class BubbleGenerator {
   Bubble generateBubble(double screenWidth, double screenHeight) {
     final angle = (random.nextDouble() * pi / 3) + (pi / 3); 
     // random between 60° and 120° (so roughly upward)
-    final speed = 2 + random.nextDouble() * 2; 
+    // Preserve the previous 2–4 logical pixels per 60 Hz frame as px/second.
+    final speed = (2 + random.nextDouble() * 2) * 60;
     return Bubble(
       x: random.nextDouble() * screenWidth,
       y: screenHeight + 20,

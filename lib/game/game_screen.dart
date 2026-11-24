@@ -728,6 +728,7 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
   // game state & assets
   late AudioPlayer _audioPlayer;
   late Ticker ticker;
+  Duration? _lastBubbleTickElapsed;
   final Random random = Random();
   int score = 0;
   int timeLeft = 30;
@@ -753,8 +754,8 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
   void initState() {
     super.initState();
     _audioPlayer = AudioPlayer();
-    ticker = createTicker((_) => setState(_updateBubbles));
-    ticker.start();
+    ticker = createTicker(_onBubbleTick);
+    _startBubbleTicker();
     _startTimer();
     globalWordChecker.loadDictionary().then((_) {
       print("Dictionary loaded");
@@ -771,11 +772,32 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
     super.dispose();
   }
 
+  void _startBubbleTicker() {
+    _lastBubbleTickElapsed = null;
+    ticker.start();
+  }
+
+  void _stopBubbleTicker() {
+    _lastBubbleTickElapsed = null;
+    ticker.stop();
+  }
+
+  void _onBubbleTick(Duration elapsed) {
+    final previousElapsed = _lastBubbleTickElapsed;
+    _lastBubbleTickElapsed = elapsed;
+    if (previousElapsed == null) return;
+
+    final deltaSeconds = (elapsed - previousElapsed).inMicroseconds / 1e6;
+    if (deltaSeconds <= 0) return;
+
+    setState(() => _updateBubbles(deltaSeconds));
+  }
+
   void _startTimer() {
     Timer(Duration(seconds: 1), () {
       if (!mounted) return;
       if (timeLeft == 0) {
-        ticker.stop();
+        _stopBubbleTicker();
         _showGameOverDialog();
       } else {
         setState(() => timeLeft--);
@@ -784,15 +806,14 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
     });
   }
 
-  void _updateBubbles() {
+  void _updateBubbles(double deltaSeconds) {
     final size = MediaQuery.of(context).size;
     _screenWidth = size.width;
     _screenHeight = size.height;
 
     // 1) Move & wall‐bounce
     for (var b in bubbles) {
-      b.x += b.vx;
-      b.y += b.vy;
+      b.advanceBy(deltaSeconds);
 
       // left/right walls
       if (b.x - b.radius < 0) {
@@ -968,13 +989,13 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
         // reset timer to starting value
         timeLeft = 30;
       });
-      ticker.stop();
+      _stopBubbleTicker();
       Timer(Duration(seconds: 2), () {
         if (!mounted) return;
         setState(() {
           isLevelTransition = false;
         });
-        ticker.start();
+        _startBubbleTicker();
       });
     }
   }
@@ -1098,7 +1119,7 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
       currentLevel = 1;
       isLevelTransition = false;
     });
-    ticker.start();
+    _startBubbleTicker();
     _startTimer();
   }
 
