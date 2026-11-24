@@ -27,6 +27,19 @@ def version_codes_from_tracks(tracks: dict[str, Any]) -> set[int]:
     return codes
 
 
+def track_readback_summary(tracks: dict[str, Any]) -> str:
+    by_name = {track.get("track"): track for track in tracks.get("tracks", [])}
+    parts = []
+    for name in ("internal", "production"):
+        releases = by_name.get(name, {}).get("releases", [])
+        summary = ", ".join(
+            f"{release.get('status')}:{'/'.join(str(code) for code in release.get('versionCodes', []))}"
+            for release in releases
+        ) or "empty"
+        parts.append(f"{name}=[{summary}]")
+    return "; ".join(parts)
+
+
 def require_unused_higher_code(expected: int, tracks: dict[str, Any]) -> None:
     existing = version_codes_from_tracks(tracks)
     if expected in existing:
@@ -175,6 +188,10 @@ def preflight_production() -> None:
         update = production_track_update(
             expected, by_name.get("internal", {}), by_name.get("production")
         )
+        print(
+            "::notice file=.github/scripts/verify_play_release.py,line=1,title=Play track readback::"
+            + track_readback_summary(tracks)
+        )
         if update is None:
             print(f"Production preflight passed: versionCode {expected} is already completed.")
         else:
@@ -259,4 +276,29 @@ if __name__ == "__main__":
         else:
             verify_production()
     except Exception as exc:
-        raise SystemExit(f"Google Play verification failed: {type(exc).__name__}: {exc}") from None
+        status = getattr(getattr(exc, "resp", None), "status", None)
+        message = ""
+        content = getattr(exc, "content", None)
+        if content:
+            try:
+                payload = json.loads(content.decode("utf-8") if isinstance(content, bytes) else content)
+                error = payload.get("error", {})
+                message = str(error.get("message", ""))
+                reasons = [str(item.get("reason")) for item in error.get("errors", []) if item.get("reason")]
+                if reasons:
+                    message = f"{message} ({', '.join(reasons)})"
+            except (AttributeError, TypeError, ValueError):
+                message = ""
+        summary = f"{type(exc).__name__}"
+        if status is not None:
+            summary += f" HTTP {status}"
+        if message:
+            summary += f": {message}"
+        else:
+            summary += f": {exc}"
+        summary = summary.replace("\r", " ").replace("\n", " ")[:500]
+        print(
+            "::error file=.github/scripts/verify_play_release.py,line=1,title=Google Play API error::"
+            + summary
+        )
+        raise SystemExit(f"Google Play operation failed: {summary}") from None
