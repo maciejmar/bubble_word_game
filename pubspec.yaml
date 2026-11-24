@@ -62,7 +62,7 @@ flutter:
   assets:
      - assets/english_dict/eng.csv
      - assets/bubble-4.png
-     - assets/fonts/arco.ttf 
+     - assets/fonts/ARCO.ttf
      - assets/fonts/bubble.ttf
      - assets/webaby-logo.png
      - assets/webaby-bubble-ad.png
@@ -81,6 +81,7 @@ flutter:
      - assets/treeCoast-level-5.png
      - assets/treeCoast-level-6.png
      - assets/treeCoast-level-7.png
+     - assets/treeCoast-level-8.png
      - assets/baby-background.png
      - assets/welcome-melody.ogg
 
@@ -99,7 +100,7 @@ flutter:
   fonts:
     - family: Arco
       fonts:
-        - asset: assets/fonts/arco.ttf
+        - asset: assets/fonts/ARCO.ttf
     - family: bubble
       fonts:
         - asset: assets/fonts/bubble.ttf

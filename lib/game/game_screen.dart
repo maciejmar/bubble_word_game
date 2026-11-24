@@ -10,6 +10,7 @@ import 'dart:ui';
 import 'bubble.dart';
 import 'word_checker.dart';
 import 'game_ui.dart';
+import 'level_config.dart';
 
 ////////////////////////////////////////////////////////////////////////
 // WORD CHECKER (unchanged for your dictionary CSV logic, if any)
@@ -812,8 +813,9 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
     _screenHeight = size.height;
 
     // 1) Move & wall‐bounce
+    final speedMultiplier = GameLevelConfig.speedMultiplierForLevel(currentLevel);
     for (var b in bubbles) {
-      b.advanceBy(deltaSeconds);
+      b.advanceBy(deltaSeconds * speedMultiplier);
 
       // left/right walls
       if (b.x - b.radius < 0) {
@@ -843,7 +845,8 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
     bubbles.removeWhere((b) => b.toBeRemoved);
 
     // 4) Spawn new bubble
-    if (random.nextDouble() < 0.05) {
+    if (random.nextDouble() <
+        GameLevelConfig.spawnProbabilityForDelta(currentLevel, deltaSeconds)) {
       bubbles.add(_bubbleGenerator.generateBubble(_screenWidth, _screenHeight));
       if (_audioAllowed) {
         _audioPlayer
@@ -972,7 +975,7 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
 
   void _checkLevelUp() {
     // If score has reached or exceeded currentLevel * 50, advance one level
-    if (score >= currentLevel * 50) {
+    if (GameLevelConfig.shouldAdvanceLevel(score, currentLevel)) {
         setState(() {
         isLevelTransition = true;
         currentLevel += 1;
@@ -1175,9 +1178,7 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
             // Background changes per level:
             Positioned.fill(
               child: Image.asset(
-                currentLevel == 1
-                    ? 'assets/canyon_river_background.png'
-                    : 'assets/treeCoast-level-$currentLevel.png',
+                GameLevelConfig.backgroundAssetForLevel(currentLevel),
                 fit: BoxFit.cover,
               ),
             ),
