@@ -5,6 +5,7 @@ from verify_play_release import (
     has_completed_internal_release,
     production_track_update,
     require_unused_higher_code,
+    track_readback_summary,
     version_code_from_pubspec,
     version_codes_from_tracks,
 )
@@ -22,6 +23,19 @@ class PlayVersionCodeTests(unittest.TestCase):
             ]
         }
         self.assertEqual(version_codes_from_tracks(tracks), {29, 30, 31})
+
+    def test_track_summary_includes_custom_closed_tracks(self):
+        summary = track_readback_summary(
+            {
+                "tracks": [
+                    {"track": "internal", "releases": [{"status": "completed", "versionCodes": [33]}]},
+                    {"track": "closed-alpha", "releases": [{"status": "inProgress", "versionCodes": [32]}]},
+                    {"track": "production", "releases": []},
+                ]
+            }
+        )
+
+        self.assertIn("closed-alpha=[inProgress:32]", summary)
 
     def test_accepts_a_new_code_above_every_track(self):
         require_unused_higher_code(32, {"tracks": [{"releases": [{"versionCodes": [31]}]}]})

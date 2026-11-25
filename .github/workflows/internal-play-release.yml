@@ -9,6 +9,15 @@ on:
         type: boolean
         default: false
   push:
+    branches:
+      - fix/android-gradle-flutter-3.50
+    paths:
+      - pubspec.yaml
+      - lib/**
+      - assets/**
+      - android/**
+      - .github/scripts/**
+      - .github/workflows/internal-play-release.yml
     tags:
       - 'internal-v*'
 
@@ -90,6 +99,15 @@ jobs:
 
       - name: Build signed Android App Bundle
         run: flutter build appbundle --release
+
+      - name: Save signed AAB build artifact
+        if: ${{ github.ref_type == 'branch' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bubble-word-game-aab-${{ github.sha }}
+          path: build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Upload to Google Play Internal testing
         if: ${{ startsWith(github.ref, 'refs/tags/internal-v') || (github.event_name == 'workflow_dispatch' && inputs.confirm_upload) }}

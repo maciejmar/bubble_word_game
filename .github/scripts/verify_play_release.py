@@ -36,16 +36,16 @@ def version_codes_from_tracks(tracks: dict[str, Any]) -> set[int]:
 
 
 def track_readback_summary(tracks: dict[str, Any]) -> str:
-    by_name = {track.get("track"): track for track in tracks.get("tracks", [])}
     parts = []
-    for name in ("internal", "production"):
-        releases = by_name.get(name, {}).get("releases", [])
+    for track in sorted(tracks.get("tracks", []), key=lambda item: str(item.get("track", ""))):
+        name = str(track.get("track", "unknown"))
+        releases = track.get("releases", [])
         summary = ", ".join(
             f"{release.get('status')}:{'/'.join(str(code) for code in release.get('versionCodes', []))}"
             for release in releases
         ) or "empty"
         parts.append(f"{name}=[{summary}]")
-    return "; ".join(parts)
+    return "; ".join(parts) or "no tracks returned"
 
 
 def format_api_error(error: Exception, stage: str | None = None) -> str:
@@ -205,6 +205,19 @@ def check_unused() -> None:
             packageName=package_name, editId=edit_id
         ).execute()
         require_unused_higher_code(expected, tracks)
+        track_summary = track_readback_summary(tracks)
+        summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary_path:
+            with open(summary_path, "a", encoding="utf-8") as summary_file:
+                summary_file.write(
+                    "### Play track inventory\n\n"
+                    f"- Proposed versionCode: `{expected}`\n"
+                    f"- Tracks: `{track_summary}`\n"
+                )
+        print(
+            "::notice file=.github/scripts/verify_play_release.py,line=1,title=Play track inventory::"
+            + track_summary
+        )
         print(f"Play versionCode preflight passed: {expected} is unused and higher than existing tracks.")
 
     with_edit(check)
