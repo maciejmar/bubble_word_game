@@ -712,6 +712,116 @@ class _FlashingGameOverTextState extends State<FlashingGameOverText> {
   }
 }
 
+class GameOverDialog extends StatefulWidget {
+  final int score;
+  final VoidCallback onPlayAgain;
+  final VoidCallback onQuit;
+
+  const GameOverDialog({
+    super.key,
+    required this.score,
+    required this.onPlayAgain,
+    required this.onQuit,
+  });
+
+  @override
+  State<GameOverDialog> createState() => _GameOverDialogState();
+}
+
+class _GameOverDialogState extends State<GameOverDialog> {
+  static const _actionsDelay = Duration(seconds: 2);
+  Timer? _actionsTimer;
+  bool _showActions = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _actionsTimer = Timer(_actionsDelay, () {
+      if (!mounted) return;
+      setState(() => _showActions = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _actionsTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FlashingGameOverText(),
+          Text(
+            'FINAL SCORE: ${widget.score}',
+            style: TextStyle(
+              fontSize: 32,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+              fontFamily: 'Arco',
+              decoration: TextDecoration.none,
+              shadows: [
+                Shadow(
+                  blurRadius: 8,
+                  color: Colors.black,
+                  offset: Offset(2, 2),
+                ),
+              ],
+            ),
+          ),
+          if (_showActions) ...[
+            SizedBox(height: 20),
+            GestureDetector(
+              onTap: widget.onPlayAgain,
+              child: Text(
+                'PLAY AGAIN',
+                style: TextStyle(
+                  fontSize: 40,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.green,
+                  fontFamily: 'Arco',
+                  decoration: TextDecoration.none,
+                  shadows: [
+                    Shadow(
+                      blurRadius: 10,
+                      color: Colors.black,
+                      offset: Offset(3, 3),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            SizedBox(height: 20),
+            GestureDetector(
+              onTap: widget.onQuit,
+              child: Text(
+                'QUIT',
+                style: TextStyle(
+                  fontSize: 40,
+                  fontWeight: FontWeight.bold,
+                  color: Color.fromARGB(255, 134, 123, 22),
+                  fontFamily: 'Arco',
+                  decoration: TextDecoration.none,
+                  shadows: [
+                    Shadow(
+                      blurRadius: 10,
+                      color: Colors.black,
+                      offset: Offset(3, 3),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class BubbleGameScreen extends StatefulWidget {
   @override
   _BubbleGameScreenState createState() => _BubbleGameScreenState();
@@ -1047,67 +1157,17 @@ class _BubbleGameScreenState extends State<BubbleGameScreen>
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (BuildContext dialogContext) {
-        return Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              FlashingGameOverText(),
-              SizedBox(height: 20),
-              GestureDetector(
-                onTap: () {
-                  if (mounted) {
-                    Navigator.of(dialogContext, rootNavigator: true).pop();
-                    Timer(Duration(milliseconds: 100), () {
-                      if (mounted) _restartGame();
-                    });
-                  }
-                },
-                child: Text(
-                  "PLAY AGAIN",
-                  style: TextStyle(
-                    fontSize: 40,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.green,
-                    fontFamily: 'Arco',
-                    decoration: TextDecoration.none, // no underline
-                    shadows: [
-                      Shadow(
-                        blurRadius: 10,
-                        color: Colors.black,
-                        offset: Offset(3, 3),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              SizedBox(height: 20),
-              GestureDetector(
-                onTap: () {
-                  SystemNavigator.pop();
-                },
-                child: Text(
-                  "QUIT",
-                  style: TextStyle(
-                    fontSize: 40,
-                    fontWeight: FontWeight.bold,
-                    color: Color.fromARGB(255, 134, 123, 22),
-                    fontFamily: 'Arco',
-                    decoration: TextDecoration.none, // no underline
-                    shadows: [
-                      Shadow(
-                        blurRadius: 10,
-                        color: Colors.black,
-                        offset: Offset(3, 3),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
+      builder: (dialogContext) => GameOverDialog(
+        score: score,
+        onPlayAgain: () {
+          if (!mounted) return;
+          Navigator.of(dialogContext, rootNavigator: true).pop();
+          Timer(const Duration(milliseconds: 100), () {
+            if (mounted) _restartGame();
+          });
+        },
+        onQuit: SystemNavigator.pop,
+      ),
     );
   }
 
