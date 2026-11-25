@@ -239,6 +239,22 @@ def verify_internal() -> None:
     with_edit(check)
 
 
+def verify_track(track_name: str) -> None:
+    expected = version_code_from_pubspec(Path("pubspec.yaml").read_text())
+
+    def check(service, package_name, edit_id):
+        track = service.edits().tracks().get(
+            packageName=package_name, editId=edit_id, track=track_name
+        ).execute()
+        if not has_completed_internal_release(expected, track):
+            raise ValueError(
+                f"versionCode {expected} was not found as a completed release on track {track_name}"
+            )
+        print(f"Verified Google Play track {track_name} contains completed versionCode {expected}.")
+
+    with_edit(check)
+
+
 def preflight_production() -> None:
     expected = version_code_from_pubspec(Path("pubspec.yaml").read_text())
 
@@ -348,6 +364,7 @@ if __name__ == "__main__":
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument("--check-unused", action="store_true")
     modes.add_argument("--verify-internal", action="store_true")
+    modes.add_argument("--verify-track", action="store_true")
     modes.add_argument("--preflight-production", action="store_true")
     modes.add_argument("--promote-production", action="store_true")
     modes.add_argument("--verify-production", action="store_true")
@@ -357,6 +374,8 @@ if __name__ == "__main__":
             check_unused()
         elif args.verify_internal:
             verify_internal()
+        elif args.verify_track:
+            verify_track(os.environ["PLAY_TRACK"])
         elif args.preflight_production:
             preflight_production()
         elif args.promote_production:
